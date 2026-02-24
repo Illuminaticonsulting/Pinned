@@ -9,6 +9,9 @@ import { SymbolService } from './services/SymbolService';
 import { SymbolSearch, createSymbolButton } from './ui/SymbolSearch';
 import { SyncControls } from './ui/SyncControls';
 import { ShareService, ShareDialog } from './services/ShareService';
+import { LiveOrderFlowService } from './services/LiveOrderFlowService';
+import { HeatmapPanel } from './heatmap/HeatmapPanel';
+import { OrderFlowSidebar } from './ui/OrderFlowSidebar';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -29,10 +32,24 @@ class PinnedApp {
   private symbolSearch: SymbolSearch | null = null;
   private syncControls: SyncControls;
 
+  // ── OrderFlow components ─────────────────────────────────────────────
+  private liveService: LiveOrderFlowService;
+  private heatmapPanel: HeatmapPanel | null = null;
+  private orderFlowSidebar: OrderFlowSidebar | null = null;
+  private liveUnsubscribers: (() => void)[] = [];
+
+  // Toggle states
+  private showHeatmap = false;
+  private showOrderbook = false;
+  private showVolumeProfile = false;
+  private showFootprint = false;
+  private showPatterns = true;
+
   constructor(rootEl: HTMLElement) {
     this.root = rootEl;
     this.symbolService = SymbolService.getInstance();
     this.syncControls = new SyncControls();
+    this.liveService = LiveOrderFlowService.getInstance();
   }
 
   // ── Bootstrap ────────────────────────────────────────────────────────────
@@ -49,7 +66,10 @@ class PinnedApp {
     this.createLayout();
     this.createToolbar();
     this.createPropertiesPanel();
+    this.createHeatmapPanel();
+    this.createOrderFlowSidebar();
     this.bindKeyboardShortcuts();
+    this.connectLiveOrderFlow();
 
     // Init symbol service (fetches all BloFin instruments)
     await this.symbolService.init();
@@ -127,6 +147,34 @@ class PinnedApp {
               <span>Share</span>
             </button>
 
+            <div class="top-bar__divider"></div>
+
+            <!-- OrderFlow Toggle Buttons -->
+            <div class="of-toggle-group">
+              <button class="of-toggle-btn" id="toggleHeatmap" title="Toggle Heatmap (VolBook)">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="4" height="4" rx="0.5" fill="currentColor" opacity="0.3"/><rect x="5" y="1" width="4" height="4" rx="0.5" fill="currentColor" opacity="0.6"/><rect x="9" y="1" width="4" height="4" rx="0.5" fill="currentColor" opacity="0.9"/><rect x="1" y="5" width="4" height="4" rx="0.5" fill="currentColor" opacity="0.5"/><rect x="5" y="5" width="4" height="4" rx="0.5" fill="currentColor" opacity="0.8"/><rect x="9" y="5" width="4" height="4" rx="0.5" fill="currentColor" opacity="0.4"/><rect x="1" y="9" width="4" height="4" rx="0.5" fill="currentColor" opacity="0.7"/><rect x="5" y="9" width="4" height="4" rx="0.5" fill="currentColor" opacity="0.2"/><rect x="9" y="9" width="4" height="4" rx="0.5" fill="currentColor" opacity="0.6"/></svg>
+                <span>Heatmap</span>
+              </button>
+              <button class="of-toggle-btn" id="toggleOrderbook" title="Toggle OrderBook + Trades Sidebar">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="5" height="2" rx="0.5" fill="#ef4444" opacity="0.7"/><rect x="1" y="4" width="7" height="2" rx="0.5" fill="#ef4444" opacity="0.5"/><rect x="1" y="8" width="6" height="2" rx="0.5" fill="#22c55e" opacity="0.5"/><rect x="1" y="11" width="4" height="2" rx="0.5" fill="#22c55e" opacity="0.7"/></svg>
+                <span>DOM</span>
+              </button>
+              <button class="of-toggle-btn" id="toggleVP" title="Toggle Volume Profile">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="3" height="12" rx="0.5" fill="currentColor" opacity="0.3"/><rect x="5" y="3" width="5" height="8" rx="0.5" fill="currentColor" opacity="0.5"/><rect x="11" y="5" width="2" height="4" rx="0.5" fill="currentColor" opacity="0.7"/></svg>
+                <span>VP</span>
+              </button>
+              <button class="of-toggle-btn" id="toggleFootprint" title="Toggle Footprint Candles">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="3" y="1" width="8" height="12" rx="1" stroke="currentColor" stroke-width="1" fill="none"/><line x1="7" y1="1" x2="7" y2="13" stroke="currentColor" stroke-width="0.5" opacity="0.4"/><line x1="3" y1="5" x2="11" y2="5" stroke="currentColor" stroke-width="0.5" opacity="0.3"/><line x1="3" y1="9" x2="11" y2="9" stroke="currentColor" stroke-width="0.5" opacity="0.3"/></svg>
+                <span>FP</span>
+              </button>
+              <button class="of-toggle-btn active" id="togglePatterns" title="Toggle Pattern Detection (Iceberg/Spoof/Absorption)">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.3"/><circle cx="7" cy="7" r="2" fill="currentColor"/></svg>
+                <span>Detect</span>
+              </button>
+            </div>
+
+            <div class="top-bar__divider"></div>
+
             <!-- Screenshot Button -->
             <button class="top-action-btn" id="screenshotBtn" title="Download screenshot (Ctrl+Shift+P)">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -153,10 +201,19 @@ class PinnedApp {
           <!-- Toolbar Mount (left side) -->
           <div id="toolbarMount" class="toolbar-mount"></div>
 
-          <!-- Chart Area with Multi-Chart Grid -->
-          <div class="chart-area" id="chartArea">
-            <div id="multiChartMount" class="multi-chart-mount"></div>
+          <!-- Chart + Heatmap vertical split -->
+          <div class="chart-heatmap-area" id="chartHeatmapArea">
+            <!-- Chart Area with Multi-Chart Grid -->
+            <div class="chart-area" id="chartArea">
+              <div id="multiChartMount" class="multi-chart-mount"></div>
+            </div>
+
+            <!-- Heatmap Panel Mount (below chart, toggleable) -->
+            <div id="heatmapPanelMount" class="heatmap-panel-mount" style="display:none"></div>
           </div>
+
+          <!-- OrderFlow Sidebar Mount (right side, toggleable) -->
+          <div id="orderFlowSidebarMount" class="of-sidebar-mount"></div>
 
           <!-- Properties Panel Mount -->
           <div id="propertiesPanelMount" class="properties-mount"></div>
@@ -205,6 +262,9 @@ class PinnedApp {
         }
       }
     }
+
+    // Update live orderflow for new symbol
+    this.onSymbolChanged();
   }
 
   private updateSymbolButton(): void {
@@ -329,6 +389,18 @@ class PinnedApp {
     // Screenshot button
     const ssBtn = this.root.querySelector('#screenshotBtn');
     ssBtn?.addEventListener('click', () => this.takeScreenshot());
+
+    // ── OrderFlow Toggle Buttons ──────────────────────────────────────────
+    this.bindToggle('toggleHeatmap', () => this.toggleHeatmap());
+    this.bindToggle('toggleOrderbook', () => this.toggleOrderbook());
+    this.bindToggle('toggleVP', () => this.toggleVolumeProfile());
+    this.bindToggle('toggleFootprint', () => this.toggleFootprint());
+    this.bindToggle('togglePatterns', () => this.togglePatterns());
+  }
+
+  private bindToggle(id: string, handler: () => void): void {
+    const btn = this.root.querySelector(`#${id}`);
+    btn?.addEventListener('click', handler);
   }
 
   // ── Share ────────────────────────────────────────────────────────────────
@@ -479,7 +551,200 @@ class PinnedApp {
     }, duration);
   }
 
+  // ── Heatmap Panel ──────────────────────────────────────────────────────
+
+  private createHeatmapPanel(): void {
+    const mount = this.root.querySelector<HTMLElement>('#heatmapPanelMount');
+    if (!mount) return;
+
+    this.heatmapPanel = new HeatmapPanel({ defaultTimeRange: '5m' });
+    this.heatmapPanel.mount(mount);
+    this.heatmapPanel.hide();
+  }
+
+  // ── OrderFlow Sidebar ──────────────────────────────────────────────────
+
+  private createOrderFlowSidebar(): void {
+    const mount = this.root.querySelector<HTMLElement>('#orderFlowSidebarMount');
+    if (!mount) return;
+
+    this.orderFlowSidebar = new OrderFlowSidebar();
+    this.orderFlowSidebar.mount(mount);
+  }
+
+  // ── Live OrderFlow Connection ──────────────────────────────────────────
+
+  private connectLiveOrderFlow(): void {
+    // Connect to server WebSocket
+    this.liveService.setSymbol('blofin', this.activeSymbol);
+    this.liveService.connect();
+
+    // Wire orderbook updates to sidebar
+    const unsubOB = this.liveService.on('orderbook', (snapshot) => {
+      this.orderFlowSidebar?.updateOrderbook(snapshot);
+    });
+    this.liveUnsubscribers.push(unsubOB);
+
+    // Wire trade updates to sidebar
+    const unsubTrade = this.liveService.on('trade', (trade) => {
+      this.orderFlowSidebar?.addTrade({
+        time: trade.time,
+        price: trade.price,
+        size: trade.size,
+        side: trade.side,
+      });
+    });
+    this.liveUnsubscribers.push(unsubTrade);
+
+    // Wire big trade updates to sidebar
+    const unsubBigTrade = this.liveService.on('bigTrade', (bt) => {
+      this.orderFlowSidebar?.addBigTrade({
+        exchange: bt.exchange,
+        symbol: bt.symbol,
+        side: bt.side,
+        price: bt.price,
+        quantity: bt.totalSize,
+        usdValue: 0,
+        timestamp: bt.time,
+      });
+    });
+    this.liveUnsubscribers.push(unsubBigTrade);
+
+    // Wire heatmap data
+    const unsubHeatFull = this.liveService.on('heatmapFull', (blob) => {
+      this.heatmapPanel?.setData(blob);
+    });
+    this.liveUnsubscribers.push(unsubHeatFull);
+
+    const unsubHeatDiff = this.liveService.on('heatmapDiff', (update) => {
+      if (update.cells) {
+        this.heatmapPanel?.updateCells(
+          update.cells.map((c) => ({
+            priceIndex: c.priceIndex,
+            timeIndex: c.timeIndex,
+            intensity: c.intensity,
+          })),
+        );
+      }
+    });
+    this.liveUnsubscribers.push(unsubHeatDiff);
+
+    // Wire pattern events to sidebar & chart annotations
+    const unsubPattern = this.liveService.on('pattern', (ev) => {
+      // Add to sidebar pattern feed
+      this.orderFlowSidebar?.addPattern({
+        type: ev.type,
+        time: ev.time,
+        price: ev.price,
+        confidence: ev.confidence,
+        direction: ev.direction,
+        estimatedSize: ev.estimatedSize,
+      });
+
+      // Add annotation to active chart pane
+      const pane = this.getActivePane();
+      if (pane && this.showPatterns) {
+        pane.addPatternEvent({
+          type: ev.type,
+          time: ev.time,
+          price: ev.price,
+          confidence: ev.confidence,
+          direction: ev.direction,
+          estimatedSize: ev.estimatedSize,
+        });
+      }
+
+      // Update absorption meter for absorption events
+      if (ev.type === 'absorption') {
+        const gauge = Math.min(Math.round(ev.confidence * 100), 100);
+        this.orderFlowSidebar?.setAbsorption(gauge);
+      }
+    });
+    this.liveUnsubscribers.push(unsubPattern);
+  }
+
+  // ── Toggle Methods ─────────────────────────────────────────────────────
+
+  private toggleHeatmap(): void {
+    this.showHeatmap = !this.showHeatmap;
+    const mount = this.root.querySelector<HTMLElement>('#heatmapPanelMount');
+    const btn = this.root.querySelector('#toggleHeatmap');
+
+    if (this.showHeatmap) {
+      if (mount) mount.style.display = 'block';
+      this.heatmapPanel?.show();
+      btn?.classList.add('active');
+    } else {
+      this.heatmapPanel?.hide();
+      if (mount) mount.style.display = 'none';
+      btn?.classList.remove('active');
+    }
+  }
+
+  private toggleOrderbook(): void {
+    this.showOrderbook = !this.showOrderbook;
+    const btn = this.root.querySelector('#toggleOrderbook');
+    const mount = this.root.querySelector<HTMLElement>('#orderFlowSidebarMount');
+
+    if (this.showOrderbook) {
+      mount?.classList.add('visible');
+      this.orderFlowSidebar?.show();
+      btn?.classList.add('active');
+    } else {
+      this.orderFlowSidebar?.hide();
+      mount?.classList.remove('visible');
+      btn?.classList.remove('active');
+    }
+  }
+
+  private toggleVolumeProfile(): void {
+    this.showVolumeProfile = !this.showVolumeProfile;
+    const btn = this.root.querySelector('#toggleVP');
+    btn?.classList.toggle('active', this.showVolumeProfile);
+
+    for (const pane of this.panes.values()) {
+      pane.setVolumeProfile(this.showVolumeProfile);
+    }
+  }
+
+  private toggleFootprint(): void {
+    this.showFootprint = !this.showFootprint;
+    const btn = this.root.querySelector('#toggleFootprint');
+    btn?.classList.toggle('active', this.showFootprint);
+
+    for (const pane of this.panes.values()) {
+      pane.setFootprint(this.showFootprint);
+    }
+  }
+
+  private togglePatterns(): void {
+    this.showPatterns = !this.showPatterns;
+    const btn = this.root.querySelector('#togglePatterns');
+    btn?.classList.toggle('active', this.showPatterns);
+
+    for (const pane of this.panes.values()) {
+      pane.setAnnotations(this.showPatterns);
+    }
+  }
+
+  // ── Symbol change: update live service ─────────────────────────────────
+
+  private onSymbolChanged(): void {
+    this.liveService.setSymbol('blofin', this.activeSymbol);
+
+    // Clear pattern events on symbol change
+    for (const pane of this.panes.values()) {
+      pane.clearPatternEvents();
+    }
+  }
+
   destroy() {
+    // Cleanup live subscriptions
+    for (const unsub of this.liveUnsubscribers) unsub();
+    this.liveUnsubscribers = [];
+    this.liveService.destroy();
+    this.heatmapPanel?.destroy();
+    this.orderFlowSidebar?.destroy();
     for (const pane of this.panes.values()) pane.destroy();
     this.panes.clear();
     this.symbolService.destroy();

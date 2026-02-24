@@ -14,6 +14,9 @@ import { renderGrid } from '../renderers/GridRenderer';
 import { renderCandlesticks } from '../renderers/CandlestickRenderer';
 import { renderCrosshair } from '../renderers/CrosshairRenderer';
 import { renderDrawings } from '../drawing/DrawingRenderer';
+import { renderVolumeProfile } from '../renderers/VolumeProfileRenderer';
+import { renderFootprint } from '../renderers/FootprintRenderer';
+import { renderPatternAnnotations } from '../renderers/PatternAnnotationRenderer';
 import { DataService } from '../services/DataService';
 import type { PaneConfig } from './MultiChartLayout';
 
@@ -34,6 +37,10 @@ export class ChartPane {
   private dataService: DataService;
   private unsubscribeLive: (() => void) | null = null;
   private loading = false;
+  private showVolumeProfile = false;
+  private showFootprint = false;
+  private showAnnotations = true;
+  private patternEvents: import('../renderers/PatternAnnotationRenderer').AnnotationPatternEvent[] = [];
 
   constructor(paneEl: HTMLElement, config: PaneConfig) {
     this.id = config.id;
@@ -128,6 +135,41 @@ export class ChartPane {
     return { ...this.config };
   }
 
+  /** Toggle volume profile overlay */
+  setVolumeProfile(enabled: boolean): void {
+    this.showVolumeProfile = enabled;
+    this.renderEngine.markDirty(2);
+  }
+
+  /** Toggle footprint candle overlay */
+  setFootprint(enabled: boolean): void {
+    this.showFootprint = enabled;
+    this.renderEngine.markDirty(1);
+  }
+
+  /** Toggle pattern annotations overlay */
+  setAnnotations(enabled: boolean): void {
+    this.showAnnotations = enabled;
+    this.renderEngine.markDirty(4);
+  }
+
+  /** Add a pattern event to be rendered as annotation */
+  addPatternEvent(event: import('../renderers/PatternAnnotationRenderer').AnnotationPatternEvent): void {
+    this.patternEvents.push(event);
+    if (this.patternEvents.length > 500) {
+      this.patternEvents = this.patternEvents.slice(-400);
+    }
+    if (this.showAnnotations) {
+      this.renderEngine.markDirty(4);
+    }
+  }
+
+  /** Clear all pattern annotations */
+  clearPatternEvents(): void {
+    this.patternEvents = [];
+    this.renderEngine.markDirty(4);
+  }
+
   destroy(): void {
     this.destroyed = true;
     if (this.unsubscribeLive) {
@@ -148,15 +190,32 @@ export class ChartPane {
       renderGrid(ctx, vp, st);
     });
 
-    // Layer 1 - Candlesticks
+    // Layer 1 - Candlesticks (+ Footprint overlay when zoomed in)
     this.renderEngine.registerRenderer(1, (ctx, vp, st) => {
       renderCandlesticks(ctx, vp, st);
+      if (this.showFootprint) {
+        renderFootprint(ctx, vp, st);
+      }
+    });
+
+    // Layer 2 - Indicators (Volume Profile)
+    this.renderEngine.registerRenderer(2, (ctx, vp, st) => {
+      if (this.showVolumeProfile) {
+        renderVolumeProfile(ctx, vp, st);
+      }
     });
 
     // Layer 3 - Drawings
     this.renderEngine.registerRenderer(3, (ctx, vp, st) => {
       const pending = this.drawingManager.getPendingDrawing?.() ?? null;
       renderDrawings(ctx, vp, st, pending);
+    });
+
+    // Layer 4 - Annotations (Iceberg / Spoof / Absorption markers)
+    this.renderEngine.registerRenderer(4, (ctx, vp, st) => {
+      if (this.showAnnotations && this.patternEvents.length > 0) {
+        renderPatternAnnotations(ctx, vp, this.patternEvents);
+      }
     });
 
     // Layer 5 - Crosshair

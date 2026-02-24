@@ -2611,3 +2611,662 @@ body {
 .share-copy-link:active {
   transform: scale(0.96);
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   OrderFlow UI Components
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── OrderFlow Toggle Button Group ────────────────────────────────────────── */
+.of-toggle-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 2px;
+}
+
+.of-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-smooth);
+  white-space: nowrap;
+  text-transform: uppercase;
+}
+
+.of-toggle-btn:hover {
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.of-toggle-btn.active {
+  color: var(--accent);
+  background: var(--accent-dim);
+  border-color: rgba(99, 102, 241, 0.25);
+  box-shadow: 0 0 8px rgba(99, 102, 241, 0.1);
+}
+
+.of-toggle-btn.active:hover {
+  background: rgba(99, 102, 241, 0.18);
+}
+
+.of-toggle-btn svg {
+  flex-shrink: 0;
+}
+
+/* ── Chart + Heatmap Vertical Split ───────────────────────────────────────── */
+.chart-heatmap-area {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── Heatmap Panel Mount ──────────────────────────────────────────────────── */
+.heatmap-panel-mount {
+  flex-shrink: 0;
+  height: 240px;
+  min-height: 120px;
+  max-height: 50vh;
+  border-top: 1px solid var(--border);
+  background: var(--bg-primary);
+  position: relative;
+  overflow: hidden;
+}
+
+.heatmap-panel-mount::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  cursor: ns-resize;
+  z-index: 10;
+  background: transparent;
+  transition: background var(--transition);
+}
+
+.heatmap-panel-mount:hover::before {
+  background: var(--accent-dim);
+}
+
+/* ── OrderFlow Sidebar Mount ──────────────────────────────────────────────── */
+.of-sidebar-mount {
+  flex-shrink: 0;
+  width: 0;
+  overflow: hidden;
+  transition: width var(--transition-smooth);
+  border-left: 0px solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.of-sidebar-mount.visible {
+  width: 280px;
+  border-left-width: 1px;
+}
+
+/* ── OrderFlow Sidebar Internal ───────────────────────────────────────────── */
+.of-sidebar {
+  display: flex;
+  flex-direction: column;
+  width: 280px;
+  height: 100%;
+  overflow: hidden;
+}
+
+.of-sidebar__tabs {
+  display: flex;
+  align-items: stretch;
+  height: 32px;
+  min-height: 32px;
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border);
+}
+
+.of-sidebar__tab {
+  flex: 1;
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all var(--transition);
+  border-bottom: 2px solid transparent;
+  padding: 0 8px;
+}
+
+.of-sidebar__tab:hover {
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.of-sidebar__tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.of-sidebar__content {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.of-sidebar__panel {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  display: none;
+}
+
+.of-sidebar__panel.active {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── OrderBook Panel (DOM Ladder) ─────────────────────────────────────────── */
+.of-orderbook {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.of-ob-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.of-ob-aggr {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.of-ob-aggr-btn {
+  appearance: none;
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.of-ob-aggr-btn:hover {
+  border-color: var(--border-hover);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.of-ob-aggr-btn.active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.of-ob-levels {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.of-ob-levels::-webkit-scrollbar {
+  width: 3px;
+}
+
+.of-ob-levels::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+
+.of-ob-row {
+  display: flex;
+  align-items: center;
+  padding: 1px 10px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 20px;
+  position: relative;
+  transition: background var(--transition-fast);
+}
+
+.of-ob-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.of-ob-row--ask {
+  color: var(--bear);
+}
+
+.of-ob-row--bid {
+  color: var(--bull);
+}
+
+.of-ob-row__bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  opacity: 0.08;
+  transition: width var(--transition);
+}
+
+.of-ob-row--ask .of-ob-row__bar {
+  right: 0;
+  background: var(--bear);
+}
+
+.of-ob-row--bid .of-ob-row__bar {
+  left: 0;
+  background: var(--bull);
+}
+
+.of-ob-row__price {
+  flex: 1;
+  text-align: right;
+  padding-right: 8px;
+  z-index: 1;
+}
+
+.of-ob-row__size {
+  flex: 1;
+  z-index: 1;
+}
+
+.of-ob-row--wall {
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.of-ob-spread {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+  background: rgba(255, 255, 255, 0.01);
+  gap: 8px;
+}
+
+.of-ob-spread__label {
+  color: var(--text-muted);
+}
+
+.of-ob-spread__value {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+/* ── Absorption Meter ────────────────────────────────────────────────────── */
+.of-absorption {
+  padding: 6px 10px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.of-absorption__label {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.of-absorption__bar {
+  height: 4px;
+  background: var(--bg-tertiary);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.of-absorption__fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--bull), var(--warning), var(--danger));
+  border-radius: 2px;
+  transition: width var(--transition-smooth);
+}
+
+/* ── Trades Panel ─────────────────────────────────────────────────────────── */
+.of-trades {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.of-trades-header {
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  gap: 6px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.of-trades-filter {
+  appearance: none;
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.of-trades-filter:hover {
+  border-color: var(--border-hover);
+}
+
+.of-trades-filter.active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.of-trades-list {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.of-trades-list::-webkit-scrollbar {
+  width: 3px;
+}
+
+.of-trades-list::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+
+.of-trade-row {
+  display: flex;
+  align-items: center;
+  padding: 2px 10px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 20px;
+  transition: background var(--transition-fast);
+}
+
+.of-trade-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.of-trade-row--buy {
+  color: var(--bull);
+}
+
+.of-trade-row--sell {
+  color: var(--bear);
+}
+
+.of-trade-row--big {
+  line-height: 28px;
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.02);
+  border-left: 2px solid;
+  padding-left: 8px;
+}
+
+.of-trade-row--big.of-trade-row--buy {
+  border-left-color: var(--bull);
+}
+
+.of-trade-row--big.of-trade-row--sell {
+  border-left-color: var(--bear);
+}
+
+.of-trade-row__time {
+  width: 52px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 9px;
+}
+
+.of-trade-row__price {
+  flex: 1;
+}
+
+.of-trade-row__size {
+  flex: 1;
+  text-align: right;
+}
+
+/* ── Pattern Feed ─────────────────────────────────────────────────────────── */
+.of-patterns {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.of-patterns-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.of-patterns-list::-webkit-scrollbar {
+  width: 3px;
+}
+
+.of-patterns-list::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+
+.of-pattern-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 11px;
+  border-bottom: 1px solid var(--border-subtle);
+  transition: background var(--transition-fast);
+}
+
+.of-pattern-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.of-pattern-row__icon {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+}
+
+.of-pattern-row__icon--iceberg {
+  background: rgba(59, 130, 246, 0.15);
+  color: var(--info);
+}
+
+.of-pattern-row__icon--spoof {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--warning);
+}
+
+.of-pattern-row__icon--absorption {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--bull);
+}
+
+.of-pattern-row__details {
+  flex: 1;
+  min-width: 0;
+}
+
+.of-pattern-row__type {
+  font-weight: 700;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.of-pattern-row__meta {
+  font-size: 9px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.of-pattern-row__confidence {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.of-pattern-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-style: italic;
+}
+
+/* ── Heatmap Panel ────────────────────────────────────────────────────────── */
+.heatmap-panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.heatmap-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+  min-height: 28px;
+}
+
+.heatmap-toolbar__label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin-right: 4px;
+}
+
+.heatmap-range-btn {
+  appearance: none;
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.heatmap-range-btn:hover {
+  border-color: var(--border-hover);
+  color: var(--text-secondary);
+}
+
+.heatmap-range-btn.active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.heatmap-canvas-wrap {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  background: var(--bg-primary);
+}
+
+.heatmap-canvas-wrap canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* Heatmap color legend */
+.heatmap-legend {
+  position: absolute;
+  right: 10px;
+  top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  background: rgba(10, 14, 23, 0.85);
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  backdrop-filter: blur(4px);
+}
+
+.heatmap-legend__bar {
+  width: 80px;
+  height: 8px;
+  border-radius: 2px;
+  background: linear-gradient(90deg,
+    #0d1117 0%,
+    #1a1a6b 20%,
+    #004466 35%,
+    #008888 50%,
+    #cccc00 65%,
+    #ff8800 80%,
+    #ff2200 100%
+  );
+}
