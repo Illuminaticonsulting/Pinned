@@ -1,0 +1,58 @@
+{
+  "name": "pinned",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Crypto-Native Orderflow Intelligence Platform",
+  "author": "Pinned Team",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "dev": "turbo run dev",
+    "dev:server": "turbo run dev --filter=@pinned/server",
+    "dev:chart": "turbo run dev --filter=@pinned/chart-engine",
+    "dev:ai": "turbo run dev --filter=@pinned/ai-service",
+    "build": "turbo run build",
+    "build:server": "turbo run build --filter=@pinned/server",
+    "build:chart": "turbo run build --filter=@pinned/chart-engine",
+    "build:ai": "turbo run build --filter=@pinned/ai-service",
+    "test": "turbo run test",
+    "test:server": "turbo run test --filter=@pinned/server",
+    "test:chart": "turbo run test --filter=@pinned/chart-engine",
+    "test:ai": "turbo run test --filter=@pinned/ai-service",
+    "lint": "turbo run lint",
+    "lint:fix": "turbo run lint:fix",
+    "format": "prettier --write \"packages/*/src/**/*.{ts,tsx,js,jsx,json}\"",
+    "format:check": "prettier --check \"packages/*/src/**/*.{ts,tsx,js,jsx,json}\"",
+    "typecheck": "turbo run typecheck",
+    "clean": "turbo run clean && rm -rf node_modules .turbo",
+    "db:migrate": "pnpm --filter @pinned/server run db:migrate",
+    "db:seed": "pnpm --filter @pinned/server run db:seed",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:build": "docker compose build",
+    "prepare": "husky install"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint": "^9.0.0",
+    "husky": "^9.0.0",
+    "lint-staged": "^15.0.0",
+    "prettier": "^3.4.0",
+    "turbo": "^2.4.0",
+    "typescript": "^5.7.0"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,yaml,yml}": [
+      "prettier --write"
+    ]
+  }
+}

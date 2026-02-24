@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    ports:
+      - '5432:5432'
+    volumes:
+      - pinned_pgdata:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: pinned
+      POSTGRES_USER: pinned
+      POSTGRES_PASSWORD: pinned_dev
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U pinned -d pinned']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '6379:6379'
+    volumes:
+      - pinned_redis:/data
+    command: redis-server --maxmemory 2gb --maxmemory-policy allkeys-lru --appendonly yes
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  server:
+    build:
+      context: .
+      dockerfile: packages/server/Dockerfile
+    ports:
+      - '3001:3001'
+      - '3002:3002'
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file: .env
+    volumes:
+      - ./packages/server:/app/packages/server
+    restart: unless-stopped
+
+  ai-service:
+    build:
+      context: .
+      dockerfile: packages/ai-service/Dockerfile
+    ports:
+      - '8000:8000'
+    depends_on:
+      redis:
+        condition: service_healthy
+    env_file: .env
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d
+    depends_on:
+      - server
+    restart: unless-stopped
+
+volumes:
+  pinned_pgdata:
+  pinned_redis:

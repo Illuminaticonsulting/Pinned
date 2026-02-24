@@ -1,0 +1,103 @@
+name: Deploy Production
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
+  NODE_VERSION: '20'
+  PNPM_VERSION: '9'
+
+permissions:
+  packages: write
+  contents: read
+
+jobs:
+  build-and-push:
+    name: Build & Push Production Images
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build all packages
+        run: pnpm build
+
+      - name: Build & push server Docker image
+        run: |
+          docker build \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/server:${{ steps.version.outputs.VERSION }} \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/server:latest \
+            -f packages/server/Dockerfile .
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/server:${{ steps.version.outputs.VERSION }}
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/server:latest
+
+      - name: Build & push AI service Docker image
+        run: |
+          docker build \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/ai-service:${{ steps.version.outputs.VERSION }} \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/ai-service:latest \
+            -f packages/ai-service/Dockerfile .
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/ai-service:${{ steps.version.outputs.VERSION }}
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/ai-service:latest
+
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build-and-push]
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Deploy to production
+        run: |
+          echo "=== Production Deployment ==="
+          echo "Version: ${{ steps.version.outputs.VERSION }}"
+          echo ""
+          echo "Add your production deployment commands here:"
+          echo ""
+          echo "Option 1 — Kubernetes:"
+          echo "  kubectl set image deployment/server server=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/server:${{ steps.version.outputs.VERSION }}"
+          echo "  kubectl set image deployment/ai-service ai-service=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/ai-service:${{ steps.version.outputs.VERSION }}"
+          echo "  kubectl rollout status deployment/server"
+          echo "  kubectl rollout status deployment/ai-service"
+          echo ""
+          echo "Option 2 — Railway:"
+          echo "  railway up --service server"
+          echo "  railway up --service ai-service"
+          echo ""
+          echo "Option 3 — Docker Compose on VPS:"
+          echo "  ssh deploy@prod 'cd /opt/pinned && docker compose pull && docker compose up -d'"
