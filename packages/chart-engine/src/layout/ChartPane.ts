@@ -262,18 +262,23 @@ export class ChartPane {
       this.renderEngine.markDirty(3);
     });
 
-    // Drawing complete — payload is void
+    // Drawing complete — payload is void (manual finish, rarely used;
+    // auto-finish goes through _onDrawingComplete callback instead)
     this.inputHandler.on('drawComplete', () => {
-      this.drawingManager.finishDrawing();
+      const finished = this.drawingManager.finishDrawing();
       this.state.setState({ selectedDrawingTool: null });
-      this.inputHandler.setMode('NAVIGATE');
+      // finishDrawing auto-selects via _onDrawingComplete, so no need to reset here
+      if (!finished) {
+        this.inputHandler.setMode('NAVIGATE');
+      }
       this.renderEngine.markDirty(3);
     });
 
     // Auto-finish callback: when DrawingManager auto-finishes (required points reached),
-    // reset InputHandler mode back to NAVIGATE.
-    this.drawingManager._onDrawingComplete = () => {
-      this.inputHandler.setMode('NAVIGATE');
+    // auto-select the drawing and switch to SELECT mode so user can move/resize immediately.
+    this.drawingManager._onDrawingComplete = (finished) => {
+      this.inputHandler.setSelectedDrawing(finished);
+      this.inputHandler.setMode('SELECT');
       this.renderEngine.markDirty(3);
     };
 
@@ -330,6 +335,42 @@ export class ChartPane {
     // Drawing move end — commit the move via CommandStack
     this.inputHandler.on('drawingMoveEnd', () => {
       this.drawingManager.finishMoveDrawing();
+      this.renderEngine.markDirty(3);
+    });
+
+    // ── Resize wiring ────────────────────────────────────────────────────────
+    // Give InputHandler a callback that checks if screen coords hit a resize handle.
+    // DrawingManager.startResize returns true if a handle was found & resize started.
+    this.inputHandler.setResizeChecker((x, y) => {
+      return this.drawingManager.startResize(x, y, this.viewport);
+    });
+
+    // Resize drag — update handle position in domain coords
+    this.inputHandler.on('drawingResize', (e) => {
+      this.drawingManager.updateResize(e.time, e.price);
+      this.renderEngine.markDirty(3);
+    });
+
+    // Resize end — commit via CommandStack
+    this.inputHandler.on('drawingResizeEnd', () => {
+      this.drawingManager.finishResize();
+      this.renderEngine.markDirty(3);
+    });
+
+    // ── Delete drawing ───────────────────────────────────────────────────────
+    this.inputHandler.on('deleteDrawing', (e) => {
+      this.drawingManager.deleteDrawing(e.drawing.id);
+      this.renderEngine.markDirty(3);
+    });
+
+    // ── Undo / Redo ──────────────────────────────────────────────────────────
+    this.inputHandler.on('undo', () => {
+      this.commandStack.undo();
+      this.renderEngine.markDirty(3);
+    });
+
+    this.inputHandler.on('redo', () => {
+      this.commandStack.redo();
       this.renderEngine.markDirty(3);
     });
   }

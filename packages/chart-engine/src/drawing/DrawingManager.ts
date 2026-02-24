@@ -201,6 +201,8 @@ export class DrawingManager {
 
   /**
    * Finalise the in-progress drawing and commit it to state via CommandStack.
+   * After committing, auto-selects the finished drawing so it's immediately
+   * ready for move/resize without an extra click.
    */
   finishDrawing(): Drawing | null {
     if (!this.pendingDrawing) return null;
@@ -216,13 +218,18 @@ export class DrawingManager {
     this.pendingDrawing = null;
     this.activeTool = null;
     this.state.setState({ selectedDrawingTool: null });
-    // Notify that drawing is complete so InputHandler can reset mode
-    this._onDrawingComplete?.();
+
+    // Auto-select the newly created drawing so user can immediately move/resize it
+    this.selectDrawing(finished.id);
+
+    // Notify that drawing is complete — pass the finished drawing so ChartPane
+    // can switch InputHandler to SELECT mode with the drawing pre-selected
+    this._onDrawingComplete?.(finished);
     return finished;
   }
 
   /** Callback invoked when a drawing is auto-finished. Set by ChartPane. */
-  _onDrawingComplete: (() => void) | null = null;
+  _onDrawingComplete: ((drawing: Drawing) => void) | null = null;
 
   /** Access the in-progress (preview) drawing, if any. */
   getPendingDrawing(): Drawing | null {

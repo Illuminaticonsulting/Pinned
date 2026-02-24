@@ -87,6 +87,12 @@ export interface InputEventMap {
   hoverDrawing: { drawing: Drawing | null };
   drawingMoveStart: { drawing: Drawing };
   drawingMoveEnd: void;
+  drawingResizeStart: { drawing: Drawing; x: number; y: number };
+  drawingResize: { time: number; price: number };
+  drawingResizeEnd: void;
+  deleteDrawing: { drawing: Drawing };
+  undo: void;
+  redo: void;
   snapToLive: void;
   modeChange: { mode: InputMode };
 }
@@ -95,7 +101,8 @@ type EventCallback<T> = (payload: T) => void;
 
 // ─── Cursor Styles ─────────────────────────────────────────────────────────────
 
-type CursorStyle = 'default' | 'crosshair' | 'grab' | 'grabbing' | 'pointer' | 'move' | 'not-allowed';
+type CursorStyle = 'default' | 'crosshair' | 'grab' | 'grabbing' | 'pointer' | 'move' | 'not-allowed'
+  | 'nw-resize' | 'ne-resize' | 'sw-resize' | 'se-resize' | 'n-resize' | 's-resize' | 'e-resize' | 'w-resize';
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
@@ -157,6 +164,12 @@ export class InputHandler {
 
   /** Whether a move-drag has been started (to emit drawingMoveStart once). */
   private _moveDragStarted = false;
+
+  /** Whether we are currently resizing a handle. */
+  private _resizing = false;
+
+  /** Callback to check if the cursor is on a resize handle (set by ChartPane). */
+  private _checkResize: ((x: number, y: number) => boolean) | null = null;
 
   // ── Momentum ───────────────────────────────────────────────────────────────
 
@@ -223,7 +236,12 @@ export class InputHandler {
   setMode(mode: InputMode): void {
     this.mode = mode;
     this.drawPointIndex = 0;
-    this.selectedDrawing = null;
+    // Only clear selection when leaving SELECT mode, not when entering it
+    if (mode !== 'SELECT') {
+      this.selectedDrawing = null;
+    }
+    this._resizing = false;
+    this._moveDragStarted = false;
     this.updateCursor();
     this.emit('modeChange', { mode });
   }
@@ -233,6 +251,34 @@ export class InputHandler {
    */
   getMode(): InputMode {
     return this.mode;
+  }
+
+  /**
+   * Programmatically set the selected drawing (used after auto-finish).
+   */
+  setSelectedDrawing(drawing: Drawing | null): void {
+    this.selectedDrawing = drawing;
+  }
+
+  /**
+   * Set a callback that checks whether screen coords (x, y) are on a resize
+   * handle of the currently selected drawing. If the callback returns true, a
+   * resize operation has been started in DrawingManager.
+   */
+  setResizeChecker(fn: (x: number, y: number) => boolean): void {
+    this._checkResize = fn;
+  }
+
+  /**
+   * Check if cursor is near any endpoint of the given drawing (for resize cursor).
+   */
+  private _isNearHandle(x: number, y: number, drawing: Drawing): boolean {
+    for (const p of drawing.points) {
+      const px = this.viewport.timeToX(p.time);
+      const py = this.viewport.priceToY(p.price);
+      if (Math.hypot(x - px, y - py) <= HIT_TOLERANCE) return true;
+    }
+    return false;
   }
 
   /**
@@ -425,19 +471,46 @@ export class InputHandler {
     this.stopMomentum();
 
     if (this.mode === 'SELECT') {
+      // 1) Check resize handle first (on the SELECTED drawing)
+      if (this.selectedDrawing && this._checkResize?.(x, y)) {
+        this._resizing = true;
+        this.emit('drawingResizeStart', { drawing: this.selectedDrawing, x, y });
+        this.setCursor('move');
+        return;
+      }
+
+      // 2) Check if clicking on any drawing body
       const hit = this.hitTestDrawings(x, y);
       if (hit) {
-        this.selectedDrawing = hit;
-        this.emit('selectDrawing', { drawing: hit });
+        if (hit.id !== this.selectedDrawing?.id) {
+          // Clicked a different drawing — select it instead
+          this.selectedDrawing = hit;
+          this.emit('selectDrawing', { drawing: hit });
+        }
         this.setCursor('move');
       } else {
+        // Clicked empty area → deselect and return to navigate
         this.selectedDrawing = null;
         this.emit('selectDrawing', { drawing: null });
+        this.mode = 'NAVIGATE';
+        this.emit('modeChange', { mode: 'NAVIGATE' });
+        this.setCursor('grabbing');
       }
+      return;
     }
 
     if (this.mode === 'NAVIGATE') {
-      this.setCursor('grabbing');
+      // Check if clicking on a drawing → select and prepare for drag in one gesture
+      const hit = this.hitTestDrawings(x, y);
+      if (hit) {
+        this.selectedDrawing = hit;
+        this.mode = 'SELECT';
+        this.emit('selectDrawing', { drawing: hit });
+        this.emit('modeChange', { mode: 'SELECT' });
+        this.setCursor('move');
+      } else {
+        this.setCursor('grabbing');
+      }
     }
   }
 
@@ -467,19 +540,24 @@ export class InputHandler {
           this.velocityY = dy;
           this.emit('pan', { deltaX: dx, deltaY: dy });
         } else if (this.mode === 'SELECT' && this.selectedDrawing) {
-          // Emit move-start on first drag frame
-          if (!this._moveDragStarted) {
-            this._moveDragStarted = true;
-            this.emit('drawingMoveStart', { drawing: this.selectedDrawing });
+          if (this._resizing) {
+            // Resize mode: emit domain coords so DrawingManager can reposition handle
+            this.emit('drawingResize', { time: domain.time, price: domain.price });
+          } else {
+            // Move mode: emit move-start on first drag frame
+            if (!this._moveDragStarted) {
+              this._moveDragStarted = true;
+              this.emit('drawingMoveStart', { drawing: this.selectedDrawing });
+            }
+            const startDomain = this.toDomain(this.pointerStartX, this.pointerStartY);
+            this.emit('drawingDrag', {
+              drawing: this.selectedDrawing,
+              deltaX: dx,
+              deltaY: dy,
+              startPoint: { time: startDomain.time, price: startDomain.price },
+              currentPoint: { time: domain.time, price: domain.price },
+            });
           }
-          const startDomain = this.toDomain(this.pointerStartX, this.pointerStartY);
-          this.emit('drawingDrag', {
-            drawing: this.selectedDrawing,
-            deltaX: dx,
-            deltaY: dy,
-            startPoint: { time: startDomain.time, price: startDomain.price },
-            currentPoint: { time: domain.time, price: domain.price },
-          });
         }
       }
 
@@ -500,7 +578,14 @@ export class InputHandler {
           this.emit('hoverDrawing', { drawing: hit });
         }
         if (this.mode === 'SELECT') {
-          this.setCursor(hit ? 'pointer' : 'default');
+          // Check if hovering over a resize handle of the selected drawing
+          if (this.selectedDrawing && this._isNearHandle(x, y, this.selectedDrawing)) {
+            this.setCursor('nw-resize');
+          } else if (hit) {
+            this.setCursor('move');
+          } else {
+            this.setCursor('default');
+          }
         } else if (hit) {
           this.setCursor('pointer');
         } else {
@@ -518,7 +603,7 @@ export class InputHandler {
     this.pointerDown = false;
 
     if (!this.isDragging) {
-      // It was a click.
+      // It was a click (not a drag).
       if (this.mode === 'DRAW') {
         // Snap to nearest OHLC price for precise drawing placement
         domain = this.snapToOHLC(x, domain);
@@ -560,10 +645,16 @@ export class InputHandler {
     } else if (this.mode === 'NAVIGATE') {
       // Start momentum scrolling.
       this.startMomentum();
-    } else if (this.mode === 'SELECT' && this._moveDragStarted) {
-      // Finished dragging a drawing — commit the move
-      this._moveDragStarted = false;
-      this.emit('drawingMoveEnd', undefined as any);
+    } else if (this.mode === 'SELECT') {
+      if (this._resizing) {
+        // Finished resizing a handle — commit
+        this._resizing = false;
+        this.emit('drawingResizeEnd', undefined as any);
+      } else if (this._moveDragStarted) {
+        // Finished dragging a drawing — commit the move
+        this._moveDragStarted = false;
+        this.emit('drawingMoveEnd', undefined as any);
+      }
     }
 
     this.isDragging = false;
@@ -751,7 +842,26 @@ export class InputHandler {
       }
     }
 
-    // Ctrl+Z / Ctrl+Shift+Z handled at a higher level (CommandStack).
+    // Delete / Backspace — delete the selected drawing
+    if ((e.key === 'Delete' || e.key === 'Backspace') && this.mode === 'SELECT' && this.selectedDrawing) {
+      e.preventDefault();
+      this.emit('deleteDrawing', { drawing: this.selectedDrawing });
+      this.selectedDrawing = null;
+      this.setMode('NAVIGATE');
+    }
+
+    // Ctrl+Z / Cmd+Z — undo
+    if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+      e.preventDefault();
+      this.emit('undo', undefined as any);
+    }
+
+    // Ctrl+Shift+Z / Cmd+Shift+Z / Ctrl+Y / Cmd+Y — redo
+    if (((e.ctrlKey || e.metaKey) && e.key === 'z' && e.shiftKey) ||
+        ((e.ctrlKey || e.metaKey) && e.key === 'y')) {
+      e.preventDefault();
+      this.emit('redo', undefined as any);
+    }
   }
 
   private onKeyUp(_e: KeyboardEvent): void {
