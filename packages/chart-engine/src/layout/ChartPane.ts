@@ -54,6 +54,7 @@ export class ChartPane {
       this.canvasContainer.clientHeight || 600,
       window.devicePixelRatio || 1,
     );
+    this.viewport.setTimeframe(config.timeframe);
 
     // RenderEngine requires (container, viewport, getState)
     this.renderEngine = new RenderEngine(
@@ -108,6 +109,7 @@ export class ChartPane {
   setTimeframe(timeframe: string): void {
     this.config.timeframe = timeframe;
     this.state.setState({ timeframe });
+    this.viewport.setTimeframe(timeframe);
     this.updatePaneHeader();
     this.loadCandles(); // Refetch candles for new timeframe
   }
@@ -132,6 +134,7 @@ export class ChartPane {
       this.unsubscribeLive();
       this.unsubscribeLive = null;
     }
+    this.hideLiveDot();
     this.resizeObserver.disconnect();
     this.inputHandler.destroy();
     this.renderEngine.destroy();
@@ -264,6 +267,7 @@ export class ChartPane {
       this.unsubscribeLive();
       this.unsubscribeLive = null;
     }
+    this.hideLiveDot();
 
     this.loading = true;
     this.showLoading();
@@ -333,6 +337,9 @@ export class ChartPane {
         this.renderEngine.markDirty(1); // candles
       },
     });
+
+    // Show live indicator dot in header
+    this.showLiveDot();
   }
 
   /** Show loading overlay on the chart pane */
@@ -353,6 +360,27 @@ export class ChartPane {
   private hideLoading(): void {
     const overlay = this.container.querySelector('.pane-loading');
     if (overlay) overlay.remove();
+  }
+
+  /** Show green live dot in pane header */
+  private showLiveDot(): void {
+    const header = this.container.querySelector('.pane-header');
+    if (!header || header.querySelector('.pane-live-dot')) return;
+    const dot = document.createElement('span');
+    dot.className = 'pane-live-dot';
+    dot.title = 'Live data';
+    const tf = header.querySelector('.pane-timeframe');
+    if (tf) {
+      tf.after(dot);
+    } else {
+      header.appendChild(dot);
+    }
+  }
+
+  /** Remove live dot from pane header */
+  private hideLiveDot(): void {
+    const dot = this.container.querySelector('.pane-live-dot');
+    if (dot) dot.remove();
   }
 
 }
