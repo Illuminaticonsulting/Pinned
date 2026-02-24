@@ -80,9 +80,13 @@ export interface InputEventMap {
   contextMenu: ContextMenuEvent;
   cursorMove: CursorMoveEvent;
   drawPoint: { time: number; price: number; pointIndex: number };
+  drawPreview: { time: number; price: number };
   drawCancel: void;
   drawComplete: void;
   selectDrawing: { drawing: Drawing | null };
+  hoverDrawing: { drawing: Drawing | null };
+  drawingMoveStart: { drawing: Drawing };
+  drawingMoveEnd: void;
   snapToLive: void;
   modeChange: { mode: InputMode };
 }
@@ -145,8 +149,14 @@ export class InputHandler {
   /** Currently selected drawing (SELECT mode). */
   private selectedDrawing: Drawing | null = null;
 
+  /** Currently hovered drawing (for visual feedback). */
+  private hoveredDrawing: Drawing | null = null;
+
   /** Drawing point index during DRAW mode. */
   private drawPointIndex = 0;
+
+  /** Whether a move-drag has been started (to emit drawingMoveStart once). */
+  private _moveDragStarted = false;
 
   // ── Momentum ───────────────────────────────────────────────────────────────
 
@@ -457,6 +467,11 @@ export class InputHandler {
           this.velocityY = dy;
           this.emit('pan', { deltaX: dx, deltaY: dy });
         } else if (this.mode === 'SELECT' && this.selectedDrawing) {
+          // Emit move-start on first drag frame
+          if (!this._moveDragStarted) {
+            this._moveDragStarted = true;
+            this.emit('drawingMoveStart', { drawing: this.selectedDrawing });
+          }
           const startDomain = this.toDomain(this.pointerStartX, this.pointerStartY);
           this.emit('drawingDrag', {
             drawing: this.selectedDrawing,
@@ -471,10 +486,26 @@ export class InputHandler {
       this.lastPointerX = x;
       this.lastPointerY = y;
     } else {
-      // Hover – update cursor style.
-      if (this.mode === 'SELECT') {
+      // Not dragging — hover feedback or draw preview.
+      if (this.mode === 'DRAW' && this.drawPointIndex > 0) {
+        // Rubber-band preview: emit cursor position so the pending drawing
+        // can render a ghost line from the last placed point to the cursor.
+        const snapped = this.snapToOHLC(x, domain);
+        this.emit('drawPreview', { time: snapped.time, price: snapped.price });
+      } else if (this.mode === 'SELECT' || this.mode === 'NAVIGATE') {
+        // Hover – update cursor style and hover drawing state.
         const hit = this.hitTestDrawings(x, y);
-        this.setCursor(hit ? 'pointer' : 'default');
+        if (hit !== this.hoveredDrawing) {
+          this.hoveredDrawing = hit;
+          this.emit('hoverDrawing', { drawing: hit });
+        }
+        if (this.mode === 'SELECT') {
+          this.setCursor(hit ? 'pointer' : 'default');
+        } else if (hit) {
+          this.setCursor('pointer');
+        } else {
+          this.setCursor(this.pointerDown ? 'grabbing' : 'crosshair');
+        }
       }
     }
   }
@@ -501,6 +532,19 @@ export class InputHandler {
         const hit = this.hitTestDrawings(x, y);
         if (hit) {
           this.emit('drawingClick', { drawing: hit, x, y });
+        } else {
+          // Click on empty area → deselect and return to navigate
+          this.selectedDrawing = null;
+          this.emit('selectDrawing', { drawing: null });
+          this.setMode('NAVIGATE');
+        }
+      } else if (this.mode === 'NAVIGATE') {
+        // Click on a drawing in NAVIGATE mode → select it
+        const hit = this.hitTestDrawings(x, y);
+        if (hit) {
+          this.selectedDrawing = hit;
+          this.setMode('SELECT');
+          this.emit('selectDrawing', { drawing: hit });
         }
       }
 
@@ -516,6 +560,10 @@ export class InputHandler {
     } else if (this.mode === 'NAVIGATE') {
       // Start momentum scrolling.
       this.startMomentum();
+    } else if (this.mode === 'SELECT' && this._moveDragStarted) {
+      // Finished dragging a drawing — commit the move
+      this._moveDragStarted = false;
+      this.emit('drawingMoveEnd', undefined as any);
     }
 
     this.isDragging = false;
@@ -550,6 +598,15 @@ export class InputHandler {
 
   private onContextMenu(e: MouseEvent): void {
     e.preventDefault();
+
+    // Right-click cancels an in-progress drawing (like TradingView).
+    if (this.mode === 'DRAW' && this.drawPointIndex > 0) {
+      this.drawPointIndex = 0;
+      this.emit('drawCancel', undefined as any);
+      this.setMode('NAVIGATE');
+      return;
+    }
+
     const { x, y } = this.canvasCoords(e);
     const domain = this.toDomain(x, y);
     const hit = this.hitTestDrawings(x, y);
@@ -779,9 +836,20 @@ export class InputHandler {
         if (pts.length === 0) return Infinity;
         return Math.abs(px - pts[0].x);
       }
-      case 'trendline':
-      case 'ray':
-      case 'extended_line':
+      case 'trendline': {
+        if (pts.length < 2) return Infinity;
+        return this.pointToSegmentDist(px, py, pts[0].x, pts[0].y, pts[1].x, pts[1].y);
+      }
+      case 'ray': {
+        // Ray extends from p0 through p1 infinitely — use unclamped t≥0
+        if (pts.length < 2) return Infinity;
+        return this.pointToRayDist(px, py, pts[0].x, pts[0].y, pts[1].x, pts[1].y, false, true);
+      }
+      case 'extended_line': {
+        // Infinite line through p0 and p1 — use fully unclamped t
+        if (pts.length < 2) return Infinity;
+        return this.pointToRayDist(px, py, pts[0].x, pts[0].y, pts[1].x, pts[1].y, true, true);
+      }
       case 'parallel_channel': {
         if (pts.length < 2) return Infinity;
         return this.pointToSegmentDist(px, py, pts[0].x, pts[0].y, pts[1].x, pts[1].y);
@@ -831,6 +899,29 @@ export class InputHandler {
 
     let t = ((px - x1) * dx + (py - y1) * dy) / lenSq;
     t = Math.max(0, Math.min(1, t));
+
+    const projX = x1 + t * dx;
+    const projY = y1 + t * dy;
+    return Math.sqrt((px - projX) ** 2 + (py - projY) ** 2);
+  }
+
+  /** Point-to-ray / infinite line distance. */
+  private pointToRayDist(
+    px: number, py: number,
+    x1: number, y1: number,
+    x2: number, y2: number,
+    extendLeft: boolean,
+    extendRight: boolean,
+  ): number {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const lenSq = dx * dx + dy * dy;
+    if (lenSq === 0) return Math.sqrt((px - x1) ** 2 + (py - y1) ** 2);
+
+    let t = ((px - x1) * dx + (py - y1) * dy) / lenSq;
+    // Clamp based on extension mode
+    if (!extendLeft) t = Math.max(0, t);
+    if (!extendRight) t = Math.min(1, t);
 
     const projX = x1 + t * dx;
     const projY = y1 + t * dy;

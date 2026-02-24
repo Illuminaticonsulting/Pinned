@@ -207,7 +207,7 @@ export class ChartPane {
 
     // Layer 3 - Drawings
     this.renderEngine.registerRenderer(3, (ctx, vp, st) => {
-      const pending = this.drawingManager.getPendingDrawing?.() ?? null;
+      const pending = this.drawingManager.getPendingDrawingForRender?.() ?? null;
       renderDrawings(ctx, vp, st, pending);
     });
 
@@ -256,12 +256,26 @@ export class ChartPane {
       this.renderEngine.markDirty(3);
     });
 
+    // Drawing rubber-band preview — update the ghost cursor point
+    this.inputHandler.on('drawPreview', (e) => {
+      this.drawingManager.updatePreviewPoint(e.time, e.price);
+      this.renderEngine.markDirty(3);
+    });
+
     // Drawing complete — payload is void
     this.inputHandler.on('drawComplete', () => {
       this.drawingManager.finishDrawing();
       this.state.setState({ selectedDrawingTool: null });
+      this.inputHandler.setMode('NAVIGATE');
       this.renderEngine.markDirty(3);
     });
+
+    // Auto-finish callback: when DrawingManager auto-finishes (required points reached),
+    // reset InputHandler mode back to NAVIGATE.
+    this.drawingManager._onDrawingComplete = () => {
+      this.inputHandler.setMode('NAVIGATE');
+      this.renderEngine.markDirty(3);
+    };
 
     // Drawing cancel — payload is void
     this.inputHandler.on('drawCancel', () => {
@@ -281,11 +295,41 @@ export class ChartPane {
       this.renderEngine.markDirty(3);
     });
 
+    // Hover drawing — update hovered state for glow effect
+    this.inputHandler.on('hoverDrawing', (e) => {
+      const drawings = this.state.getState().activeDrawings;
+      const hoveredId = e.drawing?.id ?? null;
+      let changed = false;
+      const updated = drawings.map((d) => {
+        const shouldHover = d.id === hoveredId;
+        if ((d as any)._hovered !== shouldHover) {
+          changed = true;
+          return { ...d, _hovered: shouldHover } as any;
+        }
+        return d;
+      });
+      if (changed) {
+        this.state.setState({ activeDrawings: updated });
+        this.renderEngine.markDirty(3);
+      }
+    });
+
+    // Drawing move start — tell DrawingManager to begin tracking
+    this.inputHandler.on('drawingMoveStart', (e) => {
+      this.drawingManager.startMoveDrawing(e.drawing.id);
+    });
+
     // Drawing drag (move) — payload is DrawingDragEvent
     this.inputHandler.on('drawingDrag', (e) => {
       const timeDelta = e.currentPoint.time - e.startPoint.time;
       const priceDelta = e.currentPoint.price - e.startPoint.price;
       this.drawingManager.updateMoveDrawing(timeDelta, priceDelta);
+      this.renderEngine.markDirty(3);
+    });
+
+    // Drawing move end — commit the move via CommandStack
+    this.inputHandler.on('drawingMoveEnd', () => {
+      this.drawingManager.finishMoveDrawing();
       this.renderEngine.markDirty(3);
     });
   }

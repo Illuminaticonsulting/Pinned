@@ -124,11 +124,25 @@ function renderHorizontalLine(
   const y = viewport.priceToY(drawing.points[0].price);
   const color = drawing.properties.color ?? '#2196F3';
   const lw = drawing.properties.lineWidth ?? 1;
+  const isHovered = (drawing as any)._hovered;
+
+  // Hover glow
+  if (isHovered && !drawing.selected) {
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lw + 6;
+    ctx.globalAlpha = 0.18;
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(width, y);
+    ctx.stroke();
+    ctx.restore();
+  }
 
   ctx.strokeStyle = color;
-  ctx.lineWidth = lw;
+  ctx.lineWidth = isHovered ? lw + 1 : lw;
   setLineDash(ctx, drawing.properties.lineStyle);
-
   ctx.beginPath();
   ctx.moveTo(0, y);
   ctx.lineTo(width, y);
@@ -157,10 +171,25 @@ function renderTrendLine(
   const y2 = viewport.priceToY(drawing.points[1].price);
 
   const color = drawing.properties.color ?? '#2196F3';
-  const lw = drawing.properties.lineWidth ?? 1;
+  const lw = drawing.properties.lineWidth ?? 2;
+  const isHovered = (drawing as any)._hovered;
+
+  // Hover glow — thicker semi-transparent underline
+  if (isHovered && !drawing.selected) {
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lw + 6;
+    ctx.globalAlpha = 0.18;
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    ctx.restore();
+  }
 
   ctx.strokeStyle = color;
-  ctx.lineWidth = lw;
+  ctx.lineWidth = isHovered ? lw + 1 : lw;
   setLineDash(ctx, drawing.properties.lineStyle);
 
   ctx.beginPath();
@@ -203,6 +232,8 @@ function renderTrendLine(
 
     drawHandle(ctx, x1, y1);
     drawHandle(ctx, x2, y2);
+    // Midpoint handle for dragging the whole line (TradingView-style)
+    drawHandle(ctx, mx, my);
   }
 }
 
@@ -809,6 +840,19 @@ function renderPreview(
   ctx.globalAlpha = 0.7;
 
   const preview = { ...drawing, selected: false };
+
+  // Draw the first anchor point as a visible dot even with only 1 point
+  if (drawing.points.length >= 1) {
+    const ax = viewport.timeToX(drawing.points[0].time);
+    const ay = viewport.priceToY(drawing.points[0].price);
+    ctx.beginPath();
+    ctx.arc(ax, ay, 4, 0, Math.PI * 2);
+    ctx.fillStyle = drawing.properties.color ?? '#2196F3';
+    ctx.fill();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
 
   switch (drawing.type) {
     case 'horizontal_line':

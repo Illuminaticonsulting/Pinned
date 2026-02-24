@@ -32,6 +32,7 @@ import {
   saveToServer as persistSaveToServer,
   loadFromServer as persistLoadFromServer,
 } from './DrawingPersistence';
+import { getToolById } from './DrawingTools';
 
 // ─── Tool Type Alias ───────────────────────────────────────────────────────────
 
@@ -88,7 +89,7 @@ function uid(): string {
   return `${a}${b}`;
 }
 
-/** Default visual properties for a new drawing. */
+/** Default visual properties for a new drawing, sourced from DrawingTools.ts definitions. */
 function defaultProps(tool: ActiveTool): DrawingProperties {
   const base: DrawingProperties = {
     color: '#2196F3',
@@ -96,22 +97,10 @@ function defaultProps(tool: ActiveTool): DrawingProperties {
     lineStyle: 'solid',
     showLabels: true,
   };
-
-  switch (tool) {
-    case 'rectangle':
-      return { ...base, fillColor: '#2196F3', fillOpacity: 0.15 };
-    case 'fibonacci':
-      return {
-        ...base,
-        levels: [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.272, 1.618, 2.618],
-        fillColor: '#2196F3',
-        fillOpacity: 0.06,
-      };
-    case 'anchored_vwap':
-      return { ...base, lineStyle: 'dashed', color: '#FF9800' };
-    default:
-      return base;
-  }
+  if (!tool) return base;
+  const def = getToolById(tool);
+  if (def) return { ...base, ...def.defaultProperties };
+  return base;
 }
 
 // ─── Context-Menu Items ────────────────────────────────────────────────────────
@@ -227,11 +216,48 @@ export class DrawingManager {
     this.pendingDrawing = null;
     this.activeTool = null;
     this.state.setState({ selectedDrawingTool: null });
+    // Notify that drawing is complete so InputHandler can reset mode
+    this._onDrawingComplete?.();
     return finished;
   }
 
+  /** Callback invoked when a drawing is auto-finished. Set by ChartPane. */
+  _onDrawingComplete: (() => void) | null = null;
+
   /** Access the in-progress (preview) drawing, if any. */
   getPendingDrawing(): Drawing | null {
+    return this.pendingDrawing;
+  }
+
+  /**
+   * Update the preview cursor point for rubber-band rendering.
+   * Temporarily adds/replaces the "next" point so the preview line follows the cursor.
+   */
+  updatePreviewPoint(time: number, price: number): void {
+    if (!this.pendingDrawing || !this.activeTool) return;
+    const required = REQUIRED_POINTS[this.activeTool] ?? 2;
+    const pts = [...this.pendingDrawing.points];
+    // Only rubber-band if we have at least 1 point but haven't finished yet
+    if (pts.length === 0 || pts.length >= required) return;
+    // If we already have the ghost point appended, replace it; otherwise append
+    if (pts.length > this.pendingDrawing.points.length) {
+      pts[pts.length - 1] = { time, price };
+    } else {
+      pts.push({ time, price });
+    }
+    // Store as _previewPoints (separate from committed points) so addPoint doesn't double-count
+    this.pendingDrawing = { ...this.pendingDrawing, _previewPoints: pts } as any;
+  }
+
+  /**
+   * Get the pending drawing with preview (rubber-band) points for rendering.
+   */
+  getPendingDrawingForRender(): Drawing | null {
+    if (!this.pendingDrawing) return null;
+    const preview = (this.pendingDrawing as any)._previewPoints;
+    if (preview) {
+      return { ...this.pendingDrawing, points: preview };
+    }
     return this.pendingDrawing;
   }
 
