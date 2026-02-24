@@ -332,6 +332,14 @@ export class RenderEngine {
     // Snapshot state once per frame.
     const state = this.getState();
 
+    // Live candle pulse animation: re-render layer 1 at ~20fps for smooth glow
+    if (state.liveCandle && !this.dirty[1]) {
+      if (now - (this as any)._lastGlowFrame > 50) {
+        this.dirty[1] = true;
+        (this as any)._lastGlowFrame = now;
+      }
+    }
+
     let anyDirty = false;
     for (let i = 0; i < LAYER_COUNT; i++) {
       if (!this.dirty[i]) continue;

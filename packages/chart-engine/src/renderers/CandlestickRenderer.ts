@@ -92,9 +92,10 @@ export function renderCandlesticks(
     // ── Wick ────────────────────────────────────────────────────────────────
     ctx.strokeStyle = bull ? BULL_WICK_COLOR : BEAR_WICK_COLOR;
     ctx.lineWidth = 1;
+    const wickX = Math.round(cx) + 0.5;  // half-pixel snap for crisp 1px line
     ctx.beginPath();
-    ctx.moveTo(cx, highY);
-    ctx.lineTo(cx, lowY);
+    ctx.moveTo(wickX, Math.round(highY));
+    ctx.lineTo(wickX, Math.round(lowY));
     ctx.stroke();
 
     // ── Body ────────────────────────────────────────────────────────────────
@@ -104,18 +105,33 @@ export function renderCandlesticks(
 
     ctx.fillStyle = bull ? BULL_COLOR : BEAR_COLOR;
 
+    // Snap body to integer pixels for sharp edges
+    const snappedLeft = Math.round(cx - halfBody);
+    const snappedTop = Math.round(bodyTop);
+    const snappedW = Math.max(1, Math.round(bodyW));
+    const snappedH = Math.max(1, Math.round(bodyHeight));
+
     if (bodyHeight < 1) {
       // Doji – draw a thin horizontal line
-      ctx.fillRect(cx - halfBody, openY - 0.5, bodyW, 1);
+      ctx.fillRect(snappedLeft, Math.round(openY), snappedW, 1);
     } else {
-      ctx.fillRect(cx - halfBody, bodyTop, bodyW, bodyHeight);
+      ctx.fillRect(snappedLeft, snappedTop, snappedW, snappedH);
     }
 
-    // ── Volume bar ──────────────────────────────────────────────────────────
+    // ── Volume bar (gradient for depth) ──────────────────────────────────────
     if (maxVolume > 0) {
       const volHeight = (candle.volume / maxVolume) * chartH * VOLUME_MAX_RATIO;
-      ctx.fillStyle = bull ? BULL_VOL_COLOR : BEAR_VOL_COLOR;
-      ctx.fillRect(cx - halfBody, chartH - volHeight, bodyW, volHeight);
+      const volTop = chartH - volHeight;
+      const grad = ctx.createLinearGradient(0, chartH, 0, volTop);
+      if (bull) {
+        grad.addColorStop(0, 'rgba(16, 185, 129, 0.04)');
+        grad.addColorStop(1, 'rgba(16, 185, 129, 0.22)');
+      } else {
+        grad.addColorStop(0, 'rgba(244, 63, 94, 0.04)');
+        grad.addColorStop(1, 'rgba(244, 63, 94, 0.22)');
+      }
+      ctx.fillStyle = grad;
+      ctx.fillRect(snappedLeft, Math.round(volTop), snappedW, Math.round(volHeight));
     }
   }
 

@@ -18,6 +18,24 @@ const LABEL_FONT = '11px "Inter", sans-serif';
 const LABEL_PAD_X = 6;
 const LABEL_PAD_Y = 3;
 
+/** Cross-browser rounded rect path (polyfill for ctx.roundRect). */
+function fillRoundedRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+): void {
+  r = Math.min(r, w / 2, h / 2);
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
 const FIB_COLORS = [
   'rgba(244, 67, 54, 0.08)',
   'rgba(255, 152, 0, 0.08)',
@@ -703,7 +721,7 @@ function renderMeasure(
   ctx.strokeStyle = fillColor;
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.roundRect(boxX, boxY, boxW, boxH, 4);
+  fillRoundedRect(ctx, boxX, boxY, boxW, boxH, 4);
   ctx.fill();
   ctx.stroke();
 
@@ -788,44 +806,49 @@ function renderPreview(
   candles: readonly Candle[],
 ): void {
   ctx.save();
-  ctx.globalAlpha = 0.5;
+  ctx.globalAlpha = 0.7;
+
+  const preview = { ...drawing, selected: false };
 
   switch (drawing.type) {
     case 'horizontal_line':
-      renderHorizontalLine(ctx, { ...drawing, selected: false }, viewport);
+      renderHorizontalLine(ctx, preview, viewport);
       break;
     case 'vertical_line':
-      renderVerticalLine(ctx, { ...drawing, selected: false }, viewport);
+      renderVerticalLine(ctx, preview, viewport);
       break;
     case 'trendline':
     case 'ray':
     case 'extended_line':
-      renderTrendLine(ctx, { ...drawing, selected: false }, viewport);
+      renderTrendLine(ctx, preview, viewport);
       break;
     case 'parallel_channel':
-      renderParallelChannel(ctx, { ...drawing, selected: false }, viewport);
+      renderParallelChannel(ctx, preview, viewport);
       break;
     case 'rectangle':
-      renderRectangle(ctx, { ...drawing, selected: false }, viewport);
+      renderRectangle(ctx, preview, viewport);
       break;
     case 'ellipse':
-      renderEllipse(ctx, { ...drawing, selected: false }, viewport);
+      renderEllipse(ctx, preview, viewport);
       break;
     case 'fibonacci_retracement':
     case 'fibonacci_extension':
-      renderFibonacci(ctx, { ...drawing, selected: false }, viewport);
+      renderFibonacci(ctx, preview, viewport);
       break;
     case 'text':
-      renderText(ctx, { ...drawing, selected: false }, viewport);
+      renderText(ctx, preview, viewport);
       break;
     case 'price_range':
-      renderPriceRange(ctx, { ...drawing, selected: false }, viewport);
+      renderPriceRange(ctx, preview, viewport);
       break;
     case 'date_range':
-      renderDateRange(ctx, { ...drawing, selected: false }, viewport);
+      renderDateRange(ctx, preview, viewport);
       break;
     case 'measure':
-      renderMeasure(ctx, { ...drawing, selected: false }, viewport);
+      renderMeasure(ctx, preview, viewport);
+      break;
+    case 'anchored_vwap':
+      renderAnchoredVwap(ctx, preview, viewport, candles);
       break;
     default:
       break;
@@ -880,6 +903,9 @@ function renderSingleDrawing(
       break;
     case 'measure':
       renderMeasure(ctx, drawing, viewport);
+      break;
+    case 'anchored_vwap':
+      renderAnchoredVwap(ctx, drawing, viewport, candles);
       break;
     default:
       break;

@@ -57,7 +57,7 @@ const TOOL_TO_DRAWING_TYPE: Record<string, DrawingType> = {
   price_range: 'price_range',
   date_range: 'date_range',
   measure: 'measure',
-  anchored_vwap: 'measure', // legacy alias
+  anchored_vwap: 'anchored_vwap',
 };
 
 /** Number of click-points required per tool before auto-finishing. */

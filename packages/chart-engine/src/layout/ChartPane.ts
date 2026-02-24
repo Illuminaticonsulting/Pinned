@@ -243,8 +243,9 @@ export class ChartPane {
 
     // Cursor move — payload is CursorMoveEvent { x, y, time, price }
     this.inputHandler.on('cursorMove', (e) => {
+      const visible = e.x >= 0 && e.y >= 0;
       this.state.setState({
-        cursor: { x: e.x, y: e.y, visible: true },
+        cursor: { x: e.x, y: e.y, visible },
       });
       this.renderEngine.markDirty(5);
     });

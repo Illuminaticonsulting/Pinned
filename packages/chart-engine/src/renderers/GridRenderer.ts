@@ -115,6 +115,16 @@ export function renderGrid(
   ctx.fillStyle = BG_COLOR;
   ctx.fillRect(0, 0, width, height);
 
+  // Empty state when no candle data yet
+  if (state.candles.length === 0 && !state.liveCandle) {
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.2)';
+    ctx.font = '13px Inter, -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Loading chart data…', width / 2, height / 2);
+    return;
+  }
+
   ctx.save();
   ctx.font = LABEL_FONT;
   ctx.textBaseline = 'middle';
@@ -126,13 +136,13 @@ export function renderGrid(
   ctx.fillStyle = LABEL_COLOR;
   ctx.textAlign = 'left';
 
-  // Sub-grid (half intervals)
+  // Sub-grid (half intervals) — pixel-snapped for crispness
   const subInterval = priceInterval / 2;
   const firstSubPrice = Math.ceil(priceLow / subInterval) * subInterval;
   ctx.strokeStyle = GRID_SUB_COLOR;
   ctx.lineWidth = 0.5;
   for (let p = firstSubPrice; p <= priceHigh; p += subInterval) {
-    const y = viewport.priceToY(p);
+    const y = Math.round(viewport.priceToY(p)) + 0.5;
     if (y < 0 || y > chartH) continue;
     ctx.beginPath();
     ctx.moveTo(0, y);
@@ -140,12 +150,12 @@ export function renderGrid(
     ctx.stroke();
   }
 
-  // Main grid
+  // Main grid — pixel-snapped
   ctx.strokeStyle = GRID_COLOR;
   ctx.lineWidth = GRID_LINE_WIDTH;
 
   for (let p = firstPrice; p <= priceHigh; p += priceInterval) {
-    const y = viewport.priceToY(p);
+    const y = Math.round(viewport.priceToY(p)) + 0.5;
     if (y < 0 || y > chartH) continue;
 
     // Grid line
@@ -155,7 +165,7 @@ export function renderGrid(
     ctx.stroke();
 
     // Price label in right margin
-    ctx.fillText(formatPrice(p), chartW + 8, y);
+    ctx.fillText(formatPrice(p), chartW + 8, Math.round(viewport.priceToY(p)));
   }
 
   // ── Vertical grid (time) ──────────────────────────────────────────────────
@@ -166,7 +176,7 @@ export function renderGrid(
   ctx.textBaseline = 'top';
 
   for (let t = firstTime; t <= endTime; t += timeInterval) {
-    const x = viewport.timeToX(t);
+    const x = Math.round(viewport.timeToX(t)) + 0.5;  // pixel-snap
     if (x < 0 || x > chartW) continue;
 
     // Grid line
@@ -207,8 +217,17 @@ export function renderGrid(
       const boxX = chartW + 2;
       const boxY = y - boxH / 2;
 
+      // Rounded price indicator pill
       ctx.fillStyle = CURRENT_PRICE_COLOR;
-      ctx.fillRect(boxX, boxY, boxW, boxH);
+      ctx.beginPath();
+      const rr = 3;
+      ctx.moveTo(boxX + rr, boxY);
+      ctx.arcTo(boxX + boxW, boxY, boxX + boxW, boxY + boxH, rr);
+      ctx.arcTo(boxX + boxW, boxY + boxH, boxX, boxY + boxH, rr);
+      ctx.arcTo(boxX, boxY + boxH, boxX, boxY, rr);
+      ctx.arcTo(boxX, boxY, boxX + boxW, boxY, rr);
+      ctx.closePath();
+      ctx.fill();
 
       ctx.fillStyle = '#000';
       ctx.font = LABEL_FONT;

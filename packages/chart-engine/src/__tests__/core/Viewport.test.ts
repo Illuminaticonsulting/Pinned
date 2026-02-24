@@ -67,6 +67,9 @@ describe('Viewport', () => {
   // ── Zoom ───────────────────────────────────────────────────────────
 
   describe('zoom', () => {
+    // Use a tiny timeframe so minTimeSpan (10 candles) doesn't clamp results
+    beforeEach(() => { vp.setTimeframe('1s'); });
+
     it('zoom in (factor>1) narrows the visible time range', () => {
       const { start: sBefore, end: eBefore } = vp.getVisibleTimeRange();
       const spanBefore = eBefore - sBefore;

@@ -92,7 +92,8 @@ export type DrawingType =
   | 'text'
   | 'price_range'
   | 'date_range'
-  | 'measure';
+  | 'measure'
+  | 'anchored_vwap';
 
 /** A user-created drawing on the chart */
 export interface Drawing {
@@ -240,6 +241,7 @@ export class ChartState {
    */
   setState(partial: Partial<ChartStateData>): void {
     const changedKeys: StateKey[] = [];
+    const prevValues = new Map<StateKey, unknown>();
 
     for (const rawKey of Object.keys(partial) as StateKey[]) {
       const newValue = (partial as any)[rawKey];
@@ -251,6 +253,9 @@ export class ChartState {
           this.transactionPrevValues.set(rawKey, this.cloneValue(oldValue));
         }
 
+        // Always capture for non-transactional notifications
+        prevValues.set(rawKey, this.cloneValue(oldValue));
+
         (this.state as any)[rawKey] = newValue;
         changedKeys.push(rawKey);
       }
@@ -260,7 +265,7 @@ export class ChartState {
       for (const k of changedKeys) this.pendingKeys.add(k);
     } else {
       for (const key of changedKeys) {
-        this.notify(key, (this.state as any)[key], (partial as any)[key]);
+        this.notify(key, (this.state as any)[key], prevValues.get(key));
       }
     }
   }

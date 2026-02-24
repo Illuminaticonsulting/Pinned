@@ -27,6 +27,24 @@ const ICON_RADIUS = 8;
 const LABEL_FONT = '9px JetBrains Mono, monospace';
 const ICON_FONT = '12px Inter, sans-serif';
 
+/** Cross-browser rounded rect path */
+function roundedRectPath(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+): void {
+  r = Math.min(r, w / 2, h / 2);
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
 const PATTERN_COLORS: Record<string, { fill: string; stroke: string; glow: string }> = {
   iceberg: {
     fill: 'rgba(59, 130, 246, 0.85)',
@@ -135,7 +153,7 @@ export function renderPatternAnnotations(
     // Badge background
     ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
     ctx.beginPath();
-    ctx.roundRect(badgeX, badgeY - 8, labelW, 16, 3);
+    roundedRectPath(ctx, badgeX, badgeY - 8, labelW, 16, 3);
     ctx.fill();
 
     // Badge border

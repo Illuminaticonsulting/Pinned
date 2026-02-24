@@ -99,10 +99,10 @@ type CursorStyle = 'default' | 'crosshair' | 'grab' | 'grabbing' | 'pointer' | '
 const DRAG_THRESHOLD = 3;
 
 /** Momentum friction coefficient per frame (0–1, lower = more friction). */
-const MOMENTUM_FRICTION = 0.92;
+const MOMENTUM_FRICTION = 0.965;
 
 /** Stop momentum when velocity falls below this (px/frame). */
-const MOMENTUM_MIN_VELOCITY = 0.5;
+const MOMENTUM_MIN_VELOCITY = 0.3;
 
 /** Long-press duration for touch (ms). */
 const LONG_PRESS_MS = 500;
@@ -265,6 +265,54 @@ export class InputHandler {
     };
   }
 
+  /** Snap cursor to nearest candle OHLC price for magnetic drawing placement. */
+  private snapToOHLC(
+    cursorX: number,
+    domain: { time: number; price: number },
+  ): { time: number; price: number } {
+    const state = this.getState();
+    const candleW = this.viewport.getCandleWidth();
+    const snapRadius = candleW * 0.6;
+
+    let bestCandle: any = null;
+    let bestDist = Infinity;
+
+    for (const c of state.candles) {
+      const cx = this.viewport.timeToX(c.timestamp);
+      const dist = Math.abs(cx - cursorX);
+      if (dist < bestDist && dist <= snapRadius) {
+        bestDist = dist;
+        bestCandle = c;
+      }
+    }
+    if (state.liveCandle) {
+      const cx = this.viewport.timeToX(state.liveCandle.timestamp);
+      const dist = Math.abs(cx - cursorX);
+      if (dist < bestDist && dist <= snapRadius) {
+        bestCandle = state.liveCandle;
+      }
+    }
+
+    if (!bestCandle) return domain;
+
+    // Snap price to nearest OHLC level within 12px
+    const prices: number[] = [bestCandle.open, bestCandle.high, bestCandle.low, bestCandle.close];
+    let closestPrice = domain.price;
+    let closestPriceDist = Infinity;
+
+    for (const p of prices) {
+      const py = this.viewport.priceToY(p);
+      const cursorY = this.viewport.priceToY(domain.price);
+      const d = Math.abs(py - cursorY);
+      if (d < closestPriceDist && d < 12) {
+        closestPriceDist = d;
+        closestPrice = p;
+      }
+    }
+
+    return { time: bestCandle.timestamp, price: closestPrice };
+  }
+
   // ── Cursor ─────────────────────────────────────────────────────────────────
 
   private setCursor(style: CursorStyle): void {
@@ -309,6 +357,12 @@ export class InputHandler {
     h.windowMouseup = this.onMouseUp.bind(this) as EventListener;
     window.addEventListener('mouseup', h.windowMouseup);
 
+    // Hide crosshair when cursor leaves canvas
+    h.mouseleave = ((e: MouseEvent) => {
+      this.emit('cursorMove', { x: -1, y: -1, time: 0, price: 0 } as any);
+    }) as EventListener;
+    this.canvas.addEventListener('mouseleave', h.mouseleave);
+
     // Touch
     h.touchstart = this.onTouchStart.bind(this) as EventListener;
     h.touchmove = this.onTouchMove.bind(this) as EventListener;
@@ -334,6 +388,7 @@ export class InputHandler {
     this.canvas.removeEventListener('dblclick', h.dblclick);
     this.canvas.removeEventListener('contextmenu', h.contextmenu);
     window.removeEventListener('mouseup', h.windowMouseup);
+    this.canvas.removeEventListener('mouseleave', h.mouseleave);
 
     this.canvas.removeEventListener('touchstart', h.touchstart);
     this.canvas.removeEventListener('touchmove', h.touchmove);
@@ -427,13 +482,15 @@ export class InputHandler {
   private onMouseUp(e: MouseEvent): void {
     if (!this.pointerDown) return;
     const { x, y } = this.canvasCoords(e);
-    const domain = this.toDomain(x, y);
+    let domain = this.toDomain(x, y);
 
     this.pointerDown = false;
 
     if (!this.isDragging) {
       // It was a click.
       if (this.mode === 'DRAW') {
+        // Snap to nearest OHLC price for precise drawing placement
+        domain = this.snapToOHLC(x, domain);
         this.emit('drawPoint', {
           time: domain.time,
           price: domain.price,
@@ -469,8 +526,9 @@ export class InputHandler {
     e.preventDefault();
     const { x, y } = this.canvasCoords(e);
 
-    // Normalise delta across browsers.
-    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+    // Smooth 4% zoom per tick (buttery feel, especially on trackpads)
+    const rawDelta = Math.sign(e.deltaY);
+    const delta = 1 - rawDelta * 0.04;
 
     if (e.ctrlKey || e.metaKey) {
       // Ctrl+Wheel: zoom price axis.

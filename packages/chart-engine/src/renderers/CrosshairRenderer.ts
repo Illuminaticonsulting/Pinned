@@ -8,9 +8,9 @@ import type { ChartStateData, Candle, FootprintCandle } from '../core/ChartState
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
-const CROSSHAIR_COLOR = 'rgba(255, 255, 255, 0.3)';
-const CROSSHAIR_DASH = [4, 3];
-const LABEL_BG = '#374151';
+const CROSSHAIR_COLOR = 'rgba(255, 255, 255, 0.4)';
+const CROSSHAIR_DASH = [3, 2];
+const LABEL_BG = '#1e293b';
 const LABEL_TEXT = '#ffffff';
 const LABEL_FONT = '11px JetBrains Mono, monospace';
 const OHLCV_LABEL_COLOR = '#9ca3af';
@@ -164,12 +164,29 @@ export function renderCrosshair(
     const priceText = formatPrice(cursorPrice);
     const tw = ctx.measureText(priceText).width;
     const boxW = tw + LABEL_PADDING_X * 2;
-    const boxH = 18;
+    const boxH = 20;
     const boxX = chartW + 2;
     const boxY = cursorY - boxH / 2;
 
+    // Shadow for depth
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
+    ctx.shadowBlur = 4;
+    ctx.shadowOffsetY = 1;
     ctx.fillStyle = LABEL_BG;
     fillRoundedRect(ctx, boxX, boxY, boxW, boxH, LABEL_RADIUS);
+    // Subtle border
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.15)';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(boxX + LABEL_RADIUS, boxY);
+    ctx.arcTo(boxX + boxW, boxY, boxX + boxW, boxY + boxH, LABEL_RADIUS);
+    ctx.arcTo(boxX + boxW, boxY + boxH, boxX, boxY + boxH, LABEL_RADIUS);
+    ctx.arcTo(boxX, boxY + boxH, boxX, boxY, LABEL_RADIUS);
+    ctx.arcTo(boxX, boxY, boxX + boxW, boxY, LABEL_RADIUS);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetY = 0;
     ctx.fillStyle = LABEL_TEXT;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
@@ -181,12 +198,27 @@ export function renderCrosshair(
     const timeText = formatTimestamp(cursorTime);
     const tw = ctx.measureText(timeText).width;
     const boxW = tw + LABEL_PADDING_X * 2;
-    const boxH = 18;
+    const boxH = 20;
     const boxX = cursorX - boxW / 2;
     const boxY = chartH + 4;
 
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
+    ctx.shadowBlur = 4;
+    ctx.shadowOffsetY = 1;
     ctx.fillStyle = LABEL_BG;
     fillRoundedRect(ctx, boxX, boxY, boxW, boxH, LABEL_RADIUS);
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.15)';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(boxX + LABEL_RADIUS, boxY);
+    ctx.arcTo(boxX + boxW, boxY, boxX + boxW, boxY + boxH, LABEL_RADIUS);
+    ctx.arcTo(boxX + boxW, boxY + boxH, boxX, boxY + boxH, LABEL_RADIUS);
+    ctx.arcTo(boxX, boxY + boxH, boxX, boxY, LABEL_RADIUS);
+    ctx.arcTo(boxX, boxY, boxX + boxW, boxY, LABEL_RADIUS);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetY = 0;
     ctx.fillStyle = LABEL_TEXT;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
