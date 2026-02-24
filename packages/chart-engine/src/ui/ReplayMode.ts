@@ -43,6 +43,7 @@ export class ReplayMode {
   private container: HTMLElement | null = null;
   private startDatePicker: HTMLInputElement | null = null;
   private endDatePicker: HTMLInputElement | null = null;
+  private _replayKeyHandler: ((e: KeyboardEvent) => void) | null = null;
 
   constructor(callbacks: ReplayCallbacks) {
     this.callbacks = callbacks;
@@ -166,6 +167,10 @@ export class ReplayMode {
 
   destroy(): void {
     this.stopTimer();
+    if (this._replayKeyHandler) {
+      document.removeEventListener('keydown', this._replayKeyHandler);
+      this._replayKeyHandler = null;
+    }
     this.bar?.remove();
   }
 
@@ -294,7 +299,7 @@ export class ReplayMode {
     });
 
     // Keyboard shortcuts when replay is active
-    document.addEventListener('keydown', (e) => {
+    this._replayKeyHandler = (e: KeyboardEvent) => {
       if (!this.isActive()) return;
       if ((e.target as HTMLElement).tagName === 'INPUT') return;
 
@@ -317,7 +322,8 @@ export class ReplayMode {
           }
           break;
       }
-    });
+    };
+    document.addEventListener('keydown', this._replayKeyHandler);
   }
 
   private updateUI(): void {

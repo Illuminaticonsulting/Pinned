@@ -212,7 +212,7 @@ export class TradeJournal {
     modal.innerHTML = `
       <div class="journal-header">
         <h2 class="journal-title">${isNew ? '📝 New Trade Entry' : '✏️ Edit Trade'}</h2>
-        <button class="journal-close-btn" id="journalCloseBtn">✕</button>
+        <button class="journal-close" id="journalCloseBtn">✕</button>
       </div>
 
       <div class="journal-body">
@@ -229,9 +229,9 @@ export class TradeJournal {
           </div>
           <div class="journal-field">
             <label>Side</label>
-            <div class="journal-toggle-group" id="jSide">
-              <button class="journal-toggle ${entry.side === 'long' ? 'active long' : ''}" data-value="long">🟢 Long</button>
-              <button class="journal-toggle ${entry.side === 'short' ? 'active short' : ''}" data-value="short">🔴 Short</button>
+            <div class="journal-side-group" id="jSide">
+              <button class="journal-side-btn ${entry.side === 'long' ? 'active long' : ''}" data-value="long">🟢 Long</button>
+              <button class="journal-side-btn ${entry.side === 'short' ? 'active short' : ''}" data-value="short">🔴 Short</button>
             </div>
           </div>
         </div>
@@ -254,7 +254,7 @@ export class TradeJournal {
         <div class="journal-row">
           <div class="journal-field">
             <label>Setup Type</label>
-            <div class="journal-chip-group" id="jSetup">
+            <div class="journal-chips" id="jSetup">
               ${SETUP_TYPES.map((s) =>
                 `<button class="journal-chip ${entry.setup === s.value ? 'active' : ''}" data-value="${s.value}">${s.icon} ${s.label}</button>`
               ).join('')}
@@ -265,7 +265,7 @@ export class TradeJournal {
         <div class="journal-row">
           <div class="journal-field">
             <label>Conviction Level</label>
-            <div class="journal-conviction" id="jConviction">
+            <div class="journal-stars" id="jConviction">
               ${[1, 2, 3, 4, 5].map((n) =>
                 `<button class="journal-star ${n <= entry.conviction ? 'active' : ''}" data-value="${n}">★</button>`
               ).join('')}
@@ -273,7 +273,7 @@ export class TradeJournal {
           </div>
           <div class="journal-field">
             <label>Emotional State</label>
-            <div class="journal-chip-group journal-emotions" id="jEmotion">
+            <div class="journal-chips journal-emotions" id="jEmotion">
               ${EMOTIONS.map((em) =>
                 `<button class="journal-chip ${entry.emotion === em.value ? 'active' : ''}" data-value="${em.value}">${em.icon} ${em.label}</button>`
               ).join('')}
@@ -297,8 +297,8 @@ export class TradeJournal {
       </div>
 
       <div class="journal-footer">
-        <button class="journal-btn journal-btn--secondary" id="journalCancelBtn">Cancel</button>
-        <button class="journal-btn journal-btn--primary" id="journalSaveBtn">
+        <button class="journal-btn journal-btn--cancel" id="journalCancelBtn">Cancel</button>
+        <button class="journal-btn journal-btn--save" id="journalSaveBtn">
           ${isNew ? '💾 Save Entry' : '💾 Update'}
         </button>
       </div>
@@ -313,9 +313,9 @@ export class TradeJournal {
     modal.querySelector('#journalCancelBtn')?.addEventListener('click', () => this.close());
 
     // Side toggle
-    modal.querySelectorAll<HTMLButtonElement>('#jSide .journal-toggle').forEach((btn) => {
+    modal.querySelectorAll<HTMLButtonElement>('#jSide .journal-side-btn').forEach((btn) => {
       btn.addEventListener('click', () => {
-        modal.querySelectorAll('#jSide .journal-toggle').forEach((b) => b.classList.remove('active', 'long', 'short'));
+        modal.querySelectorAll('#jSide .journal-side-btn').forEach((b) => b.classList.remove('active', 'long', 'short'));
         btn.classList.add('active', btn.dataset.value!);
         entry.side = btn.dataset.value as TradeSide;
       });
@@ -408,8 +408,8 @@ export class TradeJournal {
       <div class="journal-header">
         <h2 class="journal-title">📊 Trade Journal</h2>
         <div class="journal-header-actions">
-          <button class="journal-btn journal-btn--primary journal-btn--sm" id="journalNewBtn">+ New Entry</button>
-          <button class="journal-close-btn" id="journalCloseBtn">✕</button>
+          <button class="journal-btn journal-btn--save journal-btn--sm" id="journalNewBtn">+ New Entry</button>
+          <button class="journal-close" id="journalCloseBtn">✕</button>
         </div>
       </div>
 

@@ -225,25 +225,42 @@ export class HotkeyMacros {
       if (list) list.innerHTML = this.renderMacroList();
     });
 
-    // Delete buttons
-    modal.querySelectorAll<HTMLButtonElement>('.macro-delete-btn').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const id = btn.dataset.id!;
-        this.removeMacro(id);
-        const list = modal.querySelector('#macroList');
-        if (list) list.innerHTML = this.renderMacroList();
-      });
+    // Add Macro button
+    modal.querySelector('#macroAddBtn')?.addEventListener('click', () => {
+      const newId = `custom_${Date.now()}`;
+      const newMacro: MacroDefinition = {
+        id: newId,
+        name: `Macro ${this.macros.size + 1}`,
+        description: 'Custom macro',
+        hotkey: `Ctrl+${this.macros.size + 1}`,
+        actions: [],
+        createdAt: Date.now(),
+      };
+      this.addMacro(newMacro);
+      const list = modal.querySelector('#macroList');
+      if (list) list.innerHTML = this.renderMacroList();
     });
 
-    // Run buttons
-    modal.querySelectorAll<HTMLButtonElement>('.macro-run-btn').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
+    // Use event delegation for Delete/Run buttons so they work after re-renders
+    const macroList = modal.querySelector('#macroList');
+    macroList?.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement;
+      const deleteBtn = target.closest<HTMLButtonElement>('.macro-delete-btn');
+      if (deleteBtn) {
         e.stopPropagation();
-        const id = btn.dataset.id!;
+        const id = deleteBtn.dataset.id!;
+        this.removeMacro(id);
+        macroList.innerHTML = this.renderMacroList();
+        return;
+      }
+      const runBtn = target.closest<HTMLButtonElement>('.macro-run-btn');
+      if (runBtn) {
+        e.stopPropagation();
+        const id = runBtn.dataset.id!;
         this.executeMacro(id);
         this.closeEditor();
-      });
+        return;
+      }
     });
 
     const escHandler = (e: KeyboardEvent) => {

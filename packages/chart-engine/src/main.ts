@@ -22,6 +22,8 @@ import { AdaptiveLayoutMemory } from './ui/AdaptiveLayoutMemory';
 import { HotkeyMacros, type MacroAction } from './ui/HotkeyMacros';
 import { IndicatorConflictDetector } from './ui/IndicatorConflictDetector';
 import { SessionStatsDashboard } from './ui/SessionStatsDashboard';
+import { SmartAlerts } from './ui/SmartAlerts';
+import { SplitComparison } from './ui/SplitComparison';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -63,7 +65,10 @@ class PinnedApp {
   private adaptiveLayout: AdaptiveLayoutMemory;
   private hotkeyMacros: HotkeyMacros;
   private conflictDetector: IndicatorConflictDetector;
+  private _keydownHandler: ((e: KeyboardEvent) => void) | null = null;
   private sessionStats: SessionStatsDashboard;
+  private smartAlerts: SmartAlerts;
+  private splitComparison: SplitComparison;
 
   constructor(rootEl: HTMLElement) {
     this.root = rootEl;
@@ -116,6 +121,48 @@ class PinnedApp {
     });
 
     this.sessionStats = new SessionStatsDashboard();
+
+    this.smartAlerts = new SmartAlerts({
+      getCurrentPrice: () => {
+        const pane = this.getActivePane();
+        if (!pane) return 0;
+        const candles = pane.state.getState().candles;
+        return candles.length > 0 ? candles[candles.length - 1].close : 0;
+      },
+      getCurrentSymbol: () => this.activeSymbol,
+      getAverageVolume: () => {
+        const pane = this.getActivePane();
+        if (!pane) return 0;
+        const candles = pane.state.getState().candles;
+        const recent = candles.slice(-20);
+        if (recent.length === 0) return 0;
+        return recent.reduce((s, c) => s + c.volume, 0) / recent.length;
+      },
+      onToast: (msg, dur) => this.showToast(msg, dur),
+    });
+
+    this.splitComparison = new SplitComparison({
+      fetchCandles: async (symbol, timeframe, start, end) => {
+        try {
+          const params = new URLSearchParams({ instId: symbol, bar: timeframe });
+          if (start) params.set('after', start.toString());
+          if (end) params.set('before', end.toString());
+          const res = await fetch(`/blofin-api/api/v1/market/candles?${params}`);
+          const json = await res.json();
+          if (json?.data) {
+            return json.data.map((d: string[]) => ({
+              time: parseInt(d[0]), open: parseFloat(d[1]),
+              high: parseFloat(d[2]), low: parseFloat(d[3]),
+              close: parseFloat(d[4]), volume: parseFloat(d[5]),
+            }));
+          }
+          return [];
+        } catch { return []; }
+      },
+      getCurrentSymbol: () => this.activeSymbol,
+      getCurrentTimeframe: () => this.activeTimeframe,
+      onToast: (msg, dur) => this.showToast(msg, dur),
+    });
   }
 
   // ── Bootstrap ────────────────────────────────────────────────────────────
@@ -468,6 +515,27 @@ class PinnedApp {
     this.bindToggle('toggleVP', () => this.toggleVolumeProfile());
     this.bindToggle('toggleFootprint', () => this.toggleFootprint());
     this.bindToggle('togglePatterns', () => this.togglePatterns());
+
+    // Indicator toggle — opens command palette filtered to indicators
+    const indicatorBtn = this.root.querySelector('#indicatorToggle');
+    indicatorBtn?.addEventListener('click', () => {
+      this.commandPalette.toggle();
+      // After opening, pre-fill search with "indicator" to filter
+      setTimeout(() => {
+        const input = document.querySelector<HTMLInputElement>('.cmd-palette-input');
+        if (input) { input.value = 'indicator'; input.dispatchEvent(new Event('input')); }
+      }, 50);
+    });
+
+    // Settings button — opens command palette filtered to settings
+    const settingsBtn = this.root.querySelector('#settingsBtn');
+    settingsBtn?.addEventListener('click', () => {
+      this.commandPalette.toggle();
+      setTimeout(() => {
+        const input = document.querySelector<HTMLInputElement>('.cmd-palette-input');
+        if (input) { input.value = 'settings'; input.dispatchEvent(new Event('input')); }
+      }, 50);
+    });
   }
 
   private bindToggle(id: string, handler: () => void): void {
@@ -515,7 +583,7 @@ class PinnedApp {
   // ── Keyboard Shortcuts ───────────────────────────────────────────────────
 
   private bindKeyboardShortcuts() {
-    window.addEventListener('keydown', (e: KeyboardEvent) => {
+    this._keydownHandler = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement).tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
 
@@ -549,23 +617,23 @@ class PinnedApp {
         return;
       }
 
-      // J = open trade journal entry
-      if (key === 'J') {
-        e.preventDefault();
-        this.tradeJournal.openNewEntry();
-        this.sessionStats.recordEvent({ type: 'draw_tool', detail: 'journal', timestamp: Date.now() });
-        return;
-      }
-
-      // Shift+J = open journal dashboard
+      // Shift+J = open journal dashboard (check before plain J)
       if (e.shiftKey && key === 'J') {
         e.preventDefault();
         this.tradeJournal.openDashboard();
         return;
       }
 
-      // R = toggle replay mode
-      if (key === 'R') {
+      // J = open trade journal entry
+      if (key === 'J' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        this.tradeJournal.openNewEntry();
+        this.sessionStats.recordEvent({ type: 'place_trade', detail: 'journal_entry', timestamp: Date.now() });
+        return;
+      }
+
+      // Shift+R = toggle replay mode (R is reserved for Ray drawing tool)
+      if (e.shiftKey && key === 'R') {
         e.preventDefault();
         this.toggleReplayMode();
         return;
@@ -582,6 +650,20 @@ class PinnedApp {
       if (e.shiftKey && key === 'M') {
         e.preventDefault();
         this.hotkeyMacros.openEditor();
+        return;
+      }
+
+      // Shift+A = smart alerts manager
+      if (e.shiftKey && key === 'A') {
+        e.preventDefault();
+        this.smartAlerts.openManager();
+        return;
+      }
+
+      // Shift+C = split comparison
+      if (e.shiftKey && key === 'C') {
+        e.preventDefault();
+        this.splitComparison.open();
         return;
       }
 
@@ -629,7 +711,8 @@ class PinnedApp {
         }
         return;
       }
-    });
+    };
+    window.addEventListener('keydown', this._keydownHandler);
   }
 
   // ── Helpers ──────────────────────────────────────────────────────────────
@@ -1026,10 +1109,7 @@ class PinnedApp {
         category: 'orderflow',
         icon: '🟥',
         keywords: ['heatmap', 'heat', 'volbook'],
-        execute: () => {
-          this.toggleHeatmap();
-          this.adaptiveLayout.recordActivation('heatmap');
-        },
+        execute: () => this.toggleHeatmap(),
       },
       {
         id: 'of:orderbook',
@@ -1038,10 +1118,7 @@ class PinnedApp {
         category: 'orderflow',
         icon: '📊',
         keywords: ['dom', 'orderbook', 'order', 'book', 'depth'],
-        execute: () => {
-          this.toggleOrderbook();
-          this.adaptiveLayout.recordActivation('orderbook');
-        },
+        execute: () => this.toggleOrderbook(),
       },
       {
         id: 'of:volume_profile',
@@ -1051,10 +1128,7 @@ class PinnedApp {
         icon: '📈',
         shortcut: 'VP',
         keywords: ['volume', 'profile', 'vp', 'poc', 'value area'],
-        execute: () => {
-          this.toggleVolumeProfile();
-          this.adaptiveLayout.recordActivation('volumeProfile');
-        },
+        execute: () => this.toggleVolumeProfile(),
       },
       {
         id: 'of:footprint',
@@ -1064,10 +1138,7 @@ class PinnedApp {
         icon: '🕯',
         shortcut: 'FP',
         keywords: ['footprint', 'fp', 'cluster', 'orderflow'],
-        execute: () => {
-          this.toggleFootprint();
-          this.adaptiveLayout.recordActivation('footprint');
-        },
+        execute: () => this.toggleFootprint(),
       },
       {
         id: 'of:patterns',
@@ -1076,10 +1147,7 @@ class PinnedApp {
         category: 'orderflow',
         icon: '🎯',
         keywords: ['pattern', 'detect', 'iceberg', 'spoof', 'absorption'],
-        execute: () => {
-          this.togglePatterns();
-          this.adaptiveLayout.recordActivation('patterns');
-        },
+        execute: () => this.togglePatterns(),
       },
 
       // ── Drawing Tools ──────────────────────────────────────────────
@@ -1129,12 +1197,10 @@ class PinnedApp {
         description: 'Start/stop historical bar-by-bar replay',
         category: 'replay',
         icon: '⏪',
-        shortcut: 'R',
+        shortcut: '⇧R',
         keywords: ['replay', 'playback', 'rewind', 'practice', 'historical'],
         execute: () => this.toggleReplayMode(),
       },
-
-      // ── Journal ────────────────────────────────────────────────────
       {
         id: 'journal:new',
         label: 'New Journal Entry',
@@ -1201,6 +1267,60 @@ class PinnedApp {
         keywords: ['screenshot', 'capture', 'image', 'copy', 'clipboard'],
         execute: () => this.takeScreenshot(),
       },
+
+      // ── Alerts ─────────────────────────────────────────────────────
+      {
+        id: 'alerts:manager',
+        label: 'Smart Alerts',
+        description: 'Open alert manager for price, volume, and pattern alerts',
+        category: 'settings',
+        icon: '🔔',
+        shortcut: '⇧A',
+        keywords: ['alert', 'alarm', 'notification', 'price', 'volume', 'pattern'],
+        execute: () => this.smartAlerts.openManager(),
+      },
+      {
+        id: 'alerts:price_above',
+        label: 'Alert: Price Above',
+        description: 'Create a price-above alert at current price + 1%',
+        category: 'settings',
+        icon: '↑',
+        keywords: ['alert', 'price', 'above'],
+        execute: () => {
+          const price = this.smartAlerts['callbacks'].getCurrentPrice();
+          if (price > 0) {
+            this.smartAlerts.createPriceAlert(price * 1.01, 'above');
+            this.showToast(`Alert set: above ${(price * 1.01).toFixed(2)}`);
+          }
+        },
+      },
+      {
+        id: 'alerts:price_below',
+        label: 'Alert: Price Below',
+        description: 'Create a price-below alert at current price - 1%',
+        category: 'settings',
+        icon: '↓',
+        keywords: ['alert', 'price', 'below'],
+        execute: () => {
+          const price = this.smartAlerts['callbacks'].getCurrentPrice();
+          if (price > 0) {
+            this.smartAlerts.createPriceAlert(price * 0.99, 'below');
+            this.showToast(`Alert set: below ${(price * 0.99).toFixed(2)}`);
+          }
+        },
+      },
+
+      // ── Comparison ─────────────────────────────────────────────────
+      {
+        id: 'compare:open',
+        label: 'Split Comparison',
+        description: 'Compare price action across two time periods',
+        category: 'settings',
+        icon: '⚡',
+        shortcut: '⇧C',
+        keywords: ['compare', 'comparison', 'split', 'overlay', 'correlation'],
+        execute: () => this.splitComparison.open(),
+      },
     ];
 
     this.commandPalette.registerActions(actions);
@@ -1218,10 +1338,20 @@ class PinnedApp {
     this.symbolService.destroy();
 
     // Cleanup new features
+    this.commandPalette.destroy();
+    this.replayMode?.destroy();
+    this.tradeJournal.destroy();
     this.hotkeyMacros.destroy();
     this.conflictDetector.destroy();
     this.sessionStats.endSession();
     this.adaptiveLayout.stopMonitoring();
+    this.smartAlerts.destroy();
+    this.splitComparison.destroy();
+
+    // Cleanup keyboard listener
+    if (this._keydownHandler) {
+      window.removeEventListener('keydown', this._keydownHandler);
+    }
   }
 }
 

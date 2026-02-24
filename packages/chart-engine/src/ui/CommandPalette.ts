@@ -198,21 +198,21 @@ export class CommandPalette {
     this.modal = document.createElement('div');
     this.modal.className = 'cmd-palette';
     this.modal.innerHTML = `
-      <div class="cmd-header">
-        <svg class="cmd-search-icon" width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <div class="cmd-palette-header">
+        <svg class="cmd-icon" width="18" height="18" viewBox="0 0 18 18" fill="none">
           <circle cx="8" cy="8" r="5.5" stroke="currentColor" stroke-width="1.5"/>
           <path d="M12.5 12.5l3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
         </svg>
-        <input class="cmd-input" type="text"
+        <input class="cmd-palette-input" type="text"
                placeholder="Type a command… (e.g. 'add RSI', 'alert at 67400', 'switch ETH 15m')"
                autocomplete="off" spellcheck="false" />
-        <kbd class="cmd-esc">ESC</kbd>
+        <kbd class="cmd-shortcut">ESC</kbd>
       </div>
-      <div class="cmd-results"></div>
-      <div class="cmd-footer">
-        <span class="cmd-hint"><kbd>↑↓</kbd> navigate</span>
-        <span class="cmd-hint"><kbd>↵</kbd> select</span>
-        <span class="cmd-hint"><kbd>esc</kbd> close</span>
+      <div class="cmd-palette-results"></div>
+      <div class="cmd-palette-footer">
+        <span><kbd>↑↓</kbd> navigate</span>
+        <span><kbd>↵</kbd> select</span>
+        <span><kbd>esc</kbd> close</span>
       </div>
     `;
 
@@ -220,9 +220,9 @@ export class CommandPalette {
     document.body.appendChild(this.overlay);
 
     // Refs
-    this.input = this.modal.querySelector('.cmd-input')!;
-    this.resultsList = this.modal.querySelector('.cmd-results')!;
-    this.footerEl = this.modal.querySelector('.cmd-footer')!;
+    this.input = this.modal.querySelector('.cmd-palette-input')!;
+    this.resultsList = this.modal.querySelector('.cmd-palette-results')!;
+    this.footerEl = this.modal.querySelector('.cmd-palette-footer')!;
 
     // Events
     this.input.addEventListener('input', () => this.onInput());
@@ -354,7 +354,7 @@ export class CommandPalette {
     return `
       <div class="cmd-item" data-idx="${index}" data-id="${action.id}">
         <span class="cmd-item-icon">${action.icon}</span>
-        <div class="cmd-item-content">
+        <div class="cmd-item-text">
           <span class="cmd-item-label">${labelHtml}</span>
           ${descHtml}
         </div>
@@ -383,7 +383,7 @@ export class CommandPalette {
     if (!this.resultsList) return;
     const items = this.resultsList.querySelectorAll<HTMLElement>('.cmd-item');
     items.forEach((el, i) => {
-      el.classList.toggle('active', i === this.highlightIdx);
+      el.classList.toggle('highlighted', i === this.highlightIdx);
     });
     // Scroll into view
     items[this.highlightIdx]?.scrollIntoView({ block: 'nearest' });
@@ -457,5 +457,16 @@ export class CommandPalette {
     try {
       localStorage.setItem(CommandPalette.RECENT_KEY, JSON.stringify(this.recentIds));
     } catch { /* ignore */ }
+  }
+
+  destroy(): void {
+    this.close();
+    this.overlay?.remove();
+    this.overlay = null;
+    this.modal = null;
+    this.input = null;
+    this.resultsList = null;
+    this.footerEl = null;
+    this.actions = [];
   }
 }
