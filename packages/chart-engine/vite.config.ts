@@ -22,6 +22,12 @@ export default defineConfig({
         target: 'ws://localhost:3002',
         ws: true,
       },
+      '/blofin-api': {
+        target: 'https://openapi.blofin.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/blofin-api/, ''),
+        secure: true,
+      },
     },
   },
 });

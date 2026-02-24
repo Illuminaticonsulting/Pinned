@@ -14,6 +14,7 @@ import { renderGrid } from '../renderers/GridRenderer';
 import { renderCandlesticks } from '../renderers/CandlestickRenderer';
 import { renderCrosshair } from '../renderers/CrosshairRenderer';
 import { renderDrawings } from '../drawing/DrawingRenderer';
+import { DataService } from '../services/DataService';
 import type { PaneConfig } from './MultiChartLayout';
 
 export class ChartPane {
@@ -30,12 +31,16 @@ export class ChartPane {
   private config: PaneConfig;
   private resizeObserver: ResizeObserver;
   private destroyed = false;
+  private dataService: DataService;
+  private unsubscribeLive: (() => void) | null = null;
+  private loading = false;
 
   constructor(paneEl: HTMLElement, config: PaneConfig) {
     this.id = config.id;
     this.config = config;
     this.container = paneEl;
     this.canvasContainer = paneEl.querySelector('.pane-canvas-container')!;
+    this.dataService = DataService.getInstance();
 
     // Initialize core systems
     this.state = new ChartState({
@@ -81,8 +86,11 @@ export class ChartPane {
     // Initial resize
     this.handleResize();
 
-    // Generate demo candles if no data
-    this.generateDemoCandles();
+    // Show loading indicator while fetching
+    this.showLoading();
+
+    // Fetch real candle data from BloFin API
+    this.loadCandles();
 
     // Start render loop
     this.startRenderLoop();
@@ -94,12 +102,14 @@ export class ChartPane {
     this.config.symbol = symbol;
     this.state.setState({ symbol });
     this.updatePaneHeader();
+    this.loadCandles(); // Refetch candles for new symbol
   }
 
   setTimeframe(timeframe: string): void {
     this.config.timeframe = timeframe;
     this.state.setState({ timeframe });
     this.updatePaneHeader();
+    this.loadCandles(); // Refetch candles for new timeframe
   }
 
   setDrawingTool(tool: string | null): void {
@@ -118,6 +128,10 @@ export class ChartPane {
 
   destroy(): void {
     this.destroyed = true;
+    if (this.unsubscribeLive) {
+      this.unsubscribeLive();
+      this.unsubscribeLive = null;
+    }
     this.resizeObserver.disconnect();
     this.inputHandler.destroy();
     this.renderEngine.destroy();
@@ -241,53 +255,104 @@ export class ChartPane {
     if (tf) tf.textContent = this.config.timeframe;
   }
 
-  /** Generate realistic demo candles for display */
-  private generateDemoCandles(): void {
-    const candles: Candle[] = [];
-    const now = Date.now();
-    const tfMs = this.getTimeframeMs(this.config.timeframe);
-    let price = 42000 + Math.random() * 5000;
-    const count = 200;
+  /** Fetch real candle data from BloFin, then subscribe to live updates */
+  private async loadCandles(): Promise<void> {
+    if (this.destroyed) return;
 
-    for (let i = 0; i < count; i++) {
-      const time = now - (count - i) * tfMs;
-      const change = (Math.random() - 0.48) * price * 0.008;
-      const open = price;
-      price += change;
-      const close = price;
-      const high = Math.max(open, close) + Math.random() * Math.abs(change) * 0.5;
-      const low = Math.min(open, close) - Math.random() * Math.abs(change) * 0.5;
-      const volume = 50 + Math.random() * 200;
-      const buyVol = volume * (0.3 + Math.random() * 0.4);
-
-      candles.push({
-        timestamp: time,
-        open: +open.toFixed(2),
-        high: +high.toFixed(2),
-        low: +low.toFixed(2),
-        close: +close.toFixed(2),
-        volume: +volume.toFixed(2),
-        buyVolume: +buyVol.toFixed(2),
-        sellVolume: +(volume - buyVol).toFixed(2),
-      });
+    // Unsubscribe previous live feed
+    if (this.unsubscribeLive) {
+      this.unsubscribeLive();
+      this.unsubscribeLive = null;
     }
 
-    this.state.setState({ candles });
+    this.loading = true;
+    this.showLoading();
 
-    // Fit viewport to data
-    if (candles.length > 0) {
-      const first = candles[0]!;
-      const last = candles[candles.length - 1]!;
-      this.viewport.setVisibleRange(first.timestamp, last.timestamp);
-      this.viewport.fitPriceRange(candles);
+    try {
+      const candles = await this.dataService.fetchCandles(
+        this.config.symbol,
+        this.config.timeframe,
+        300,
+      );
+
+      if (this.destroyed) return;
+
+      this.state.setState({ candles });
+
+      // Fit viewport to data
+      if (candles.length > 0) {
+        const first = candles[0]!;
+        const last = candles[candles.length - 1]!;
+        this.viewport.setVisibleRange(first.timestamp, last.timestamp);
+        this.viewport.fitPriceRange(candles);
+      }
+
+      this.renderEngine.markAllDirty();
+
+      // Subscribe to live candle updates
+      this.subscribeLive();
+    } catch (err) {
+      console.error('[ChartPane] Failed to load candles:', err);
+    } finally {
+      this.loading = false;
+      this.hideLoading();
     }
   }
 
-  private getTimeframeMs(tf: string): number {
-    const map: Record<string, number> = {
-      '1m': 60_000, '5m': 300_000, '15m': 900_000,
-      '1h': 3_600_000, '4h': 14_400_000, '1d': 86_400_000,
-    };
-    return map[tf] ?? 60_000;
+  /** Subscribe to live WebSocket candle stream */
+  private subscribeLive(): void {
+    this.unsubscribeLive = this.dataService.subscribe({
+      symbol: this.config.symbol,
+      timeframe: this.config.timeframe,
+      onCandle: (candle) => {
+        if (this.destroyed) return;
+
+        const st = this.state.getState();
+        const candles = [...st.candles];
+
+        // Update or append candle
+        const lastIdx = candles.length - 1;
+        if (lastIdx >= 0 && candles[lastIdx]!.timestamp === candle.timestamp) {
+          // Update existing candle (in-progress bar)
+          candles[lastIdx] = candle;
+        } else {
+          // New candle
+          candles.push(candle);
+          // Keep max 500 candles in memory
+          if (candles.length > 500) candles.shift();
+        }
+
+        this.state.setState({ candles });
+
+        // Auto-scale price if enabled
+        if (st.autoScale) {
+          this.viewport.fitPriceRange(candles);
+        }
+
+        this.renderEngine.markDirty(0); // grid
+        this.renderEngine.markDirty(1); // candles
+      },
+    });
   }
+
+  /** Show loading overlay on the chart pane */
+  private showLoading(): void {
+    let overlay = this.container.querySelector('.pane-loading') as HTMLElement | null;
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.className = 'pane-loading';
+      overlay.innerHTML = `
+        <div class="pane-loading-spinner"></div>
+        <div class="pane-loading-text">Loading ${this.config.symbol}...</div>
+      `;
+      this.canvasContainer.appendChild(overlay);
+    }
+  }
+
+  /** Hide the loading overlay */
+  private hideLoading(): void {
+    const overlay = this.container.querySelector('.pane-loading');
+    if (overlay) overlay.remove();
+  }
+
 }

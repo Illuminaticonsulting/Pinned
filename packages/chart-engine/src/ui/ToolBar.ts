@@ -2,8 +2,8 @@
  * ToolBar.ts
  * TradingView-style floating toolbar for drawing tools.
  * Displays tool categories with expandable sub-menus.
- * Features: hover tooltips, keyboard shortcuts, active state,
- * favoriting, and smooth animations.
+ * Features: rich hover tooltips with descriptions and shortcut keys,
+ * smooth animations, active state, and favoriting.
  */
 
 import {
@@ -29,6 +29,7 @@ export class ToolBar {
   private submenuEl: HTMLElement | null = null;
   private favorites: Set<string> = new Set(['hline', 'trendline', 'rectangle', 'fibonacci', 'measure']);
   private keyHandler: (e: KeyboardEvent) => void;
+  private closeHandler: (e: MouseEvent) => void;
 
   constructor(container: HTMLElement, onToolSelect: ToolBarCallback) {
     this.container = container;
@@ -40,11 +41,12 @@ export class ToolBar {
     this.keyHandler = this.handleKeyDown.bind(this);
     window.addEventListener('keydown', this.keyHandler);
     // Close submenu on click outside
-    document.addEventListener('mousedown', (e) => {
+    this.closeHandler = (e: MouseEvent) => {
       if (!this.el.contains(e.target as Node) && this.submenuEl && !this.submenuEl.contains(e.target as Node)) {
         this.closeSubmenu();
       }
-    });
+    };
+    document.addEventListener('mousedown', this.closeHandler);
   }
 
   // ── Public API ─────────────────────────────────────────────────────────
@@ -58,6 +60,7 @@ export class ToolBar {
 
   destroy(): void {
     window.removeEventListener('keydown', this.keyHandler);
+    document.removeEventListener('mousedown', this.closeHandler);
     this.el.remove();
     this.submenuEl?.remove();
   }
@@ -71,7 +74,8 @@ export class ToolBar {
     this.addToolButton({
       id: '_pointer',
       label: 'Select / Move',
-      icon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" stroke="none"><path d="M5 3l14 8-6 2-4 6z"/></svg>`,
+      description: 'Select and move drawings',
+      icon: `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" stroke="none"><path d="M5 3l14 8-6 2-4 6z"/></svg>`,
       shortcut: 'Esc',
       isPointer: true,
     });
@@ -89,7 +93,8 @@ export class ToolBar {
     this.addToolButton({
       id: '_eraser',
       label: 'Delete Drawing',
-      icon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M18 13l-5 5H7l-3-3 9-9 5 5z"/><line x1="13" y1="18" x2="21" y2="18"/></svg>`,
+      description: 'Remove selected drawing',
+      icon: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M18 13l-5 5H7l-3-3 9-9 5 5z"/><line x1="13" y1="18" x2="21" y2="18"/></svg>`,
       shortcut: 'Del',
       isEraser: true,
     });
@@ -98,7 +103,8 @@ export class ToolBar {
     this.addToolButton({
       id: '_crosshair',
       label: 'Crosshair',
-      icon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="12" y1="2" x2="12" y2="22" stroke-dasharray="3 2"/><line x1="2" y1="12" x2="22" y2="12" stroke-dasharray="3 2"/><circle cx="12" cy="12" r="3"/></svg>`,
+      description: 'Toggle crosshair cursor',
+      icon: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="12" y1="2" x2="12" y2="22" stroke-dasharray="3 2"/><line x1="2" y1="12" x2="22" y2="12" stroke-dasharray="3 2"/><circle cx="12" cy="12" r="3"/></svg>`,
       shortcut: 'Space',
       isCrosshair: true,
     });
@@ -107,6 +113,7 @@ export class ToolBar {
   private addToolButton(opts: {
     id: string;
     label: string;
+    description?: string;
     icon: string;
     shortcut?: string;
     isPointer?: boolean;
@@ -116,10 +123,12 @@ export class ToolBar {
     const btn = document.createElement('button');
     btn.className = 'tb-btn';
     btn.dataset.toolId = opts.id;
-    btn.title = opts.label + (opts.shortcut ? ` (${opts.shortcut})` : '');
+    btn.title = opts.label; // fallback for accessibility
     btn.innerHTML = `
       <span class="tb-icon">${opts.icon}</span>
-      <span class="tb-tooltip">${opts.label}${opts.shortcut ? `<kbd>${opts.shortcut}</kbd>` : ''}</span>
+      <span class="tb-tooltip">
+        ${opts.label}${opts.shortcut ? `<kbd>${opts.shortcut}</kbd>` : ''}
+      </span>
     `;
 
     if (opts.isPointer) {
@@ -151,7 +160,7 @@ export class ToolBar {
     btn.className = 'tb-btn tb-category';
     btn.dataset.category = category;
     btn.dataset.toolId = displayTool.id;
-    btn.title = `${label} — ${displayTool.label}`;
+    btn.title = displayTool.label;
     btn.innerHTML = `
       <span class="tb-icon">${displayTool.icon}</span>
       <span class="tb-expand-dot"></span>
@@ -215,6 +224,7 @@ export class ToolBar {
       const item = document.createElement('button');
       item.className = 'tb-sub-item';
       if (tool.id === this.activeToolId) item.classList.add('active');
+      item.title = tool.description;
       item.innerHTML = `
         <span class="tb-sub-icon">${tool.icon}</span>
         <span class="tb-sub-label">${tool.label}</span>
@@ -226,7 +236,12 @@ export class ToolBar {
         // Update category button to show this tool
         anchorBtn.querySelector('.tb-icon')!.innerHTML = tool.icon;
         anchorBtn.dataset.toolId = tool.id;
-        anchorBtn.title = `${tool.label}${tool.shortcut ? ` (${tool.shortcut})` : ''}`;
+        anchorBtn.title = tool.label;
+        // Update tooltip text
+        const tooltip = anchorBtn.querySelector('.tb-tooltip');
+        if (tooltip) {
+          tooltip.innerHTML = `${tool.label}${tool.shortcut ? `<kbd>${tool.shortcut}</kbd>` : ''}`;
+        }
       });
       sub.appendChild(item);
     }
