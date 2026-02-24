@@ -7,6 +7,10 @@ export default defineConfig({
     target: 'es2022',
     sourcemap: true,
   },
+  test: {
+    globals: true,
+    environment: 'node',
+  },
   server: {
     port: 5173,
     proxy: {

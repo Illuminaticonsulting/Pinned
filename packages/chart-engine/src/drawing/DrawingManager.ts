@@ -39,29 +39,43 @@ import {
  * Convenience union of the drawing tool names the toolbar exposes.
  * `null` means no tool is active (pointer / selection mode).
  */
-export type ActiveTool =
-  | 'hline'
-  | 'trendline'
-  | 'rectangle'
-  | 'fibonacci'
-  | 'anchored_vwap'
-  | null;
+export type ActiveTool = string | null;
 
 /** Map toolbar tool names → internal DrawingType. */
 const TOOL_TO_DRAWING_TYPE: Record<string, DrawingType> = {
   hline: 'horizontal_line',
+  vline: 'vertical_line',
   trendline: 'trendline',
-  rectangle: 'rectangle',
+  ray: 'ray',
+  extended_line: 'extended_line',
+  parallel_channel: 'parallel_channel',
   fibonacci: 'fibonacci_retracement',
-  anchored_vwap: 'measure', // repurpose 'measure' for AVWAP
+  fib_extension: 'fibonacci_extension',
+  rectangle: 'rectangle',
+  ellipse: 'ellipse',
+  text: 'text',
+  price_range: 'price_range',
+  date_range: 'date_range',
+  measure: 'measure',
+  anchored_vwap: 'measure', // legacy alias
 };
 
 /** Number of click-points required per tool before auto-finishing. */
 const REQUIRED_POINTS: Record<string, number> = {
   hline: 1,
+  vline: 1,
   trendline: 2,
-  rectangle: 2,
+  ray: 2,
+  extended_line: 2,
+  parallel_channel: 3,
   fibonacci: 2,
+  fib_extension: 2,
+  rectangle: 2,
+  ellipse: 2,
+  text: 1,
+  price_range: 2,
+  date_range: 2,
+  measure: 2,
   anchored_vwap: 1,
 };
 

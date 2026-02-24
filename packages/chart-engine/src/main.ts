@@ -1,5 +1,11 @@
 import './styles.css';
 
+import { MultiChartLayout, type LayoutMode, type PaneConfig } from './layout/MultiChartLayout';
+import { ChartPane } from './layout/ChartPane';
+import { ToolBar } from './ui/ToolBar';
+import { PropertiesPanel } from './ui/PropertiesPanel';
+import { getToolByShortcut } from './drawing/DrawingTools';
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 interface Candle {
@@ -11,57 +17,36 @@ interface Candle {
   volume: number;
 }
 
-interface AppState {
-  symbol: string;
-  timeframe: string;
-  candles: Candle[];
-  ws: WebSocket | null;
-  drawingMode: string | null;
-  crosshairEnabled: boolean;
-}
-
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const SYMBOLS = ['BTC-USDT', 'ETH-USDT'];
+const SYMBOLS = ['BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'DOGE-USDT', 'ARB-USDT', 'MATIC-USDT'];
 const TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h', '1d'];
-const DRAWING_TOOLS = [
-  { id: 'hline', label: 'H-Line', icon: '─', shortcut: 'H' },
-  { id: 'trendline', label: 'Trend Line', icon: '╱', shortcut: 'T' },
-  { id: 'rect', label: 'Rectangle', icon: '▭', shortcut: 'R' },
-  { id: 'fib', label: 'Fibonacci', icon: '𝐅', shortcut: 'F' },
-];
 
 // ─── PinnedApp ───────────────────────────────────────────────────────────────
 
 class PinnedApp {
   private root: HTMLElement;
-  private state: AppState;
-  private chartCanvas: HTMLCanvasElement | null = null;
-  private chartCtx: CanvasRenderingContext2D | null = null;
-  private resizeObserver: ResizeObserver | null = null;
-  private animationFrameId: number | null = null;
+  private layout: MultiChartLayout | null = null;
+  private toolbar: ToolBar | null = null;
+  private propertiesPanel: PropertiesPanel | null = null;
+  private panes: Map<string, ChartPane> = new Map();
+  private activePaneId: string | null = null;
+  private activeSymbol = 'BTC-USDT';
+  private activeTimeframe = '1m';
+  private ws: WebSocket | null = null;
 
   constructor(rootEl: HTMLElement) {
     this.root = rootEl;
-    this.state = {
-      symbol: 'BTC-USDT',
-      timeframe: '1m',
-      candles: [],
-      ws: null,
-      drawingMode: null,
-      crosshairEnabled: true,
-    };
   }
 
   // ── Bootstrap ────────────────────────────────────────────────────────────
 
   async init() {
     this.renderShell();
+    this.createLayout();
+    this.createToolbar();
+    this.createPropertiesPanel();
     this.bindKeyboardShortcuts();
-    this.setupResizeHandler();
-    await this.loadCandles();
-    this.connectWebSocket();
-    this.startRenderLoop();
   }
 
   // ── UI Shell ─────────────────────────────────────────────────────────────
@@ -77,64 +62,42 @@ class PinnedApp {
               <select id="symbolSelect" class="symbol-select">
                 ${SYMBOLS.map(
                   (s) =>
-                    `<option value="${s}" ${s === this.state.symbol ? 'selected' : ''}>${s}</option>`,
+                    `<option value="${s}" ${s === this.activeSymbol ? 'selected' : ''}>${s}</option>`,
                 ).join('')}
               </select>
             </div>
             <div class="timeframe-group" id="timeframeGroup">
               ${TIMEFRAMES.map(
                 (tf) =>
-                  `<button class="tf-btn ${tf === this.state.timeframe ? 'active' : ''}" data-tf="${tf}">${tf}</button>`,
+                  `<button class="tf-btn ${tf === this.activeTimeframe ? 'active' : ''}" data-tf="${tf}">${tf}</button>`,
               ).join('')}
             </div>
           </div>
           <div class="top-bar__center">
-            <div class="drawing-tools" id="drawingTools">
-              ${DRAWING_TOOLS.map(
-                (dt) =>
-                  `<button class="tool-btn" data-tool="${dt.id}" title="${dt.label} (${dt.shortcut})">
-                    <span class="tool-icon">${dt.icon}</span>
-                  </button>`,
-              ).join('')}
-            </div>
+            <div id="layoutSelectorMount"></div>
           </div>
           <div class="top-bar__right">
             <button class="icon-btn" id="indicatorToggle" title="Indicators">
-              <span>📊</span>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 14L6 6l3 4 2-6 3 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
             <button class="icon-btn" id="settingsBtn" title="Settings">
-              <span>⚙</span>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 10a2 2 0 100-4 2 2 0 000 4z" stroke="currentColor" stroke-width="1.5"/><path d="M13.5 8c0-.3-.2-.6-.4-.8l1-1.5-.8-1.4-1.7.4c-.4-.3-.9-.5-1.4-.6L9.8 2.5H8.2l-.4 1.6c-.5.1-1 .3-1.4.6l-1.7-.4-.8 1.4 1 1.5c-.2.2-.4.5-.4.8s.2.6.4.8l-1 1.5.8 1.4 1.7-.4c.4.3.9.5 1.4.6l.4 1.6h1.6l.4-1.6c.5-.1 1-.3 1.4-.6l1.7.4.8-1.4-1-1.5c.2-.2.4-.5.4-.8z" stroke="currentColor" stroke-width="1.5"/></svg>
             </button>
           </div>
         </header>
 
         <!-- Main Area -->
         <div class="main-area">
-          <!-- Sidebar Left (collapsible) -->
-          <aside class="sidebar sidebar--left" id="sidebarLeft">
-            <div class="sidebar__panel">
-              <div class="panel-header">Watchlist</div>
-              <div class="panel-body" id="watchlistPanel"></div>
-            </div>
-          </aside>
+          <!-- Toolbar Mount (left side) -->
+          <div id="toolbarMount" class="toolbar-mount"></div>
 
-          <!-- Chart Area -->
-          <div class="chart-container" id="chartContainer">
-            <canvas id="chartCanvas"></canvas>
-            <div class="crosshair-info" id="crosshairInfo"></div>
+          <!-- Chart Area with Multi-Chart Grid -->
+          <div class="chart-area" id="chartArea">
+            <div id="multiChartMount" class="multi-chart-mount"></div>
           </div>
 
-          <!-- Sidebar Right (collapsible) -->
-          <aside class="sidebar sidebar--right" id="sidebarRight">
-            <div class="sidebar__panel">
-              <div class="panel-header">Order Book</div>
-              <div class="panel-body" id="orderbookPanel"></div>
-            </div>
-            <div class="sidebar__panel">
-              <div class="panel-header">Trades</div>
-              <div class="panel-body" id="tradesPanel"></div>
-            </div>
-          </aside>
+          <!-- Properties Panel Mount -->
+          <div id="propertiesPanelMount" class="properties-mount"></div>
         </div>
       </div>
 
@@ -142,24 +105,95 @@ class PinnedApp {
       <div class="toast-container" id="toastContainer"></div>
     `;
 
-    // Bind UI events
     this.bindUIEvents();
-
-    // Set up canvas
-    const container = this.root.querySelector<HTMLElement>('#chartContainer')!;
-    this.chartCanvas = this.root.querySelector<HTMLCanvasElement>('#chartCanvas')!;
-    this.chartCtx = this.chartCanvas.getContext('2d');
-    this.sizeCanvas(container);
   }
 
-  // ── UI Event Binding ─────────────────────────────────────────────────────
+  // ── Layout Management ────────────────────────────────────────────────────
+
+  private createLayout() {
+    const mount = this.root.querySelector<HTMLElement>('#multiChartMount')!;
+    const selectorMount = this.root.querySelector<HTMLElement>('#layoutSelectorMount')!;
+
+    this.layout = new MultiChartLayout(mount);
+    this.layout.init({
+      onPaneCreated: (paneEl: HTMLElement, config: PaneConfig) => {
+        const pane = new ChartPane(paneEl, config);
+        this.panes.set(config.id, pane);
+        if (!this.activePaneId) {
+          this.activePaneId = config.id;
+        }
+      },
+      onPaneRemoved: (id: string) => {
+        const pane = this.panes.get(id);
+        if (pane) {
+          pane.destroy();
+          this.panes.delete(id);
+        }
+        if (this.activePaneId === id) {
+          this.activePaneId = this.panes.keys().next().value ?? null;
+        }
+      },
+      onPaneActivated: (id: string) => {
+        this.activePaneId = id;
+        // Update top bar to reflect active pane's symbol/timeframe
+        const pane = this.panes.get(id);
+        if (pane) {
+          const cfg = pane.getConfig();
+          this.activeSymbol = cfg.symbol;
+          this.activeTimeframe = cfg.timeframe;
+          this.updateTopBarSelections();
+        }
+      },
+    });
+
+    // Mount layout selector in top bar
+    const selectorEl = this.layout.createLayoutSelector();
+    selectorMount.appendChild(selectorEl);
+  }
+
+  private createToolbar() {
+    const mount = this.root.querySelector<HTMLElement>('#toolbarMount')!;
+    this.toolbar = new ToolBar(mount, (toolId: string | null) => {
+      const pane = this.getActivePane();
+      if (pane) {
+        pane.setDrawingTool(toolId);
+      }
+    });
+  }
+
+  private createPropertiesPanel() {
+    this.propertiesPanel = new PropertiesPanel(
+      // onChange callback: (drawingId, props)
+      (drawingId: string, props: Partial<import('./core/ChartState').DrawingProperties>) => {
+        const pane = this.getActivePane();
+        if (!pane) return;
+        const drawings = pane.state.getState().activeDrawings;
+        pane.state.setState({
+          activeDrawings: drawings.map((d) =>
+            d.id === drawingId
+              ? { ...d, properties: { ...d.properties, ...props }, updatedAt: Date.now() }
+              : d,
+          ),
+        });
+      },
+      // onDelete callback: (drawingId)
+      (drawingId: string) => {
+        const pane = this.getActivePane();
+        if (!pane) return;
+        pane.drawingManager.deleteDrawing(drawingId);
+      },
+    );
+  }
+
+  // ── UI Events ────────────────────────────────────────────────────────────
 
   private bindUIEvents() {
     // Symbol selector
     const symbolSelect = this.root.querySelector<HTMLSelectElement>('#symbolSelect')!;
     symbolSelect.addEventListener('change', (e) => {
-      this.state.symbol = (e.target as HTMLSelectElement).value;
-      this.onSymbolOrTimeframeChange();
+      this.activeSymbol = (e.target as HTMLSelectElement).value;
+      const pane = this.getActivePane();
+      if (pane) pane.setSymbol(this.activeSymbol);
     });
 
     // Timeframe buttons
@@ -167,31 +201,11 @@ class PinnedApp {
     tfGroup.addEventListener('click', (e) => {
       const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('.tf-btn');
       if (!btn) return;
-      this.state.timeframe = btn.dataset.tf!;
+      this.activeTimeframe = btn.dataset.tf!;
       tfGroup.querySelectorAll('.tf-btn').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
-      this.onSymbolOrTimeframeChange();
-    });
-
-    // Drawing tools
-    const toolGroup = this.root.querySelector('#drawingTools')!;
-    toolGroup.addEventListener('click', (e) => {
-      const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('.tool-btn');
-      if (!btn) return;
-      this.setDrawingMode(btn.dataset.tool!);
-    });
-  }
-
-  // ── Drawing Mode ─────────────────────────────────────────────────────────
-
-  private setDrawingMode(mode: string | null) {
-    this.state.drawingMode = this.state.drawingMode === mode ? null : mode;
-
-    this.root.querySelectorAll('.tool-btn').forEach((btn) => {
-      btn.classList.toggle(
-        'active',
-        (btn as HTMLElement).dataset.tool === this.state.drawingMode,
-      );
+      const pane = this.getActivePane();
+      if (pane) pane.setTimeframe(this.activeTimeframe);
     });
   }
 
@@ -199,267 +213,72 @@ class PinnedApp {
 
   private bindKeyboardShortcuts() {
     window.addEventListener('keydown', (e: KeyboardEvent) => {
-      // Ignore when typing in inputs
-      if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') return;
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
 
       const key = e.key.toUpperCase();
 
-      if (key === 'H') { this.setDrawingMode('hline'); return; }
-      if (key === 'T' && !e.ctrlKey && !e.metaKey) { this.setDrawingMode('trendline'); return; }
-      if (key === 'R' && !e.ctrlKey && !e.metaKey) { this.setDrawingMode('rect'); return; }
-      if (key === 'F' && !e.ctrlKey && !e.metaKey) { this.setDrawingMode('fib'); return; }
-      if (key === 'ESCAPE') { this.setDrawingMode(null); return; }
-      if (key === ' ') { e.preventDefault(); this.state.crosshairEnabled = !this.state.crosshairEnabled; return; }
+      // Escape = deselect tool
+      if (key === 'ESCAPE') {
+        const pane = this.getActivePane();
+        if (pane) pane.setDrawingTool(null);
+        if (this.toolbar) this.toolbar.setActiveTool(null);
+        return;
+      }
+
+      // Delete/Backspace = delete selected drawing
+      if (key === 'DELETE' || key === 'BACKSPACE') {
+        const pane = this.getActivePane();
+        if (!pane) return;
+        const selectedId = pane.drawingManager.getSelectedDrawingId();
+        if (selectedId) {
+          pane.drawingManager.deleteDrawing(selectedId);
+          return;
+        }
+      }
 
       // Undo / Redo
       if ((e.ctrlKey || e.metaKey) && key === 'Z' && !e.shiftKey) {
         e.preventDefault();
-        this.undo();
+        const pane = this.getActivePane();
+        if (pane) pane.commandStack.undo();
         return;
       }
-      if ((e.ctrlKey || e.metaKey) && key === 'Z' && e.shiftKey) {
+      if ((e.ctrlKey || e.metaKey) && (key === 'Z' && e.shiftKey || key === 'Y')) {
         e.preventDefault();
-        this.redo();
+        const pane = this.getActivePane();
+        if (pane) pane.commandStack.redo();
+        return;
+      }
+
+      // Tool shortcuts
+      const toolId = getToolByShortcut(key);
+      if (toolId) {
+        const pane = this.getActivePane();
+        if (pane) {
+          pane.setDrawingTool(toolId);
+          if (this.toolbar) this.toolbar.setActiveTool(toolId);
+        }
         return;
       }
     });
   }
 
-  private undo() {
-    this.showToast('Undo');
+  // ── Helpers ──────────────────────────────────────────────────────────────
+
+  private getActivePane(): ChartPane | null {
+    if (!this.activePaneId) return null;
+    return this.panes.get(this.activePaneId) ?? null;
   }
 
-  private redo() {
-    this.showToast('Redo');
-  }
+  private updateTopBarSelections() {
+    const symbolSelect = this.root.querySelector<HTMLSelectElement>('#symbolSelect');
+    if (symbolSelect) symbolSelect.value = this.activeSymbol;
 
-  // ── Resize Handling ──────────────────────────────────────────────────────
-
-  private setupResizeHandler() {
-    const container = () => this.root.querySelector<HTMLElement>('#chartContainer');
-
-    this.resizeObserver = new ResizeObserver(() => {
-      const c = container();
-      if (c && this.chartCanvas) this.sizeCanvas(c);
-    });
-
-    // Observe after first render tick
-    requestAnimationFrame(() => {
-      const c = container();
-      if (c) this.resizeObserver!.observe(c);
-    });
-
-    window.addEventListener('resize', () => {
-      const c = container();
-      if (c && this.chartCanvas) this.sizeCanvas(c);
+    this.root.querySelectorAll('.tf-btn').forEach((btn) => {
+      btn.classList.toggle('active', (btn as HTMLElement).dataset.tf === this.activeTimeframe);
     });
   }
-
-  private sizeCanvas(container: HTMLElement) {
-    const dpr = window.devicePixelRatio || 1;
-    const rect = container.getBoundingClientRect();
-    this.chartCanvas!.width = rect.width * dpr;
-    this.chartCanvas!.height = rect.height * dpr;
-    this.chartCanvas!.style.width = `${rect.width}px`;
-    this.chartCanvas!.style.height = `${rect.height}px`;
-    this.chartCtx?.scale(dpr, dpr);
-  }
-
-  // ── Data Loading ─────────────────────────────────────────────────────────
-
-  private async loadCandles() {
-    try {
-      const res = await fetch(`/api/candles?symbol=${this.state.symbol}&interval=${this.state.timeframe}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data: Candle[] = await res.json();
-      this.state.candles = data;
-    } catch (err) {
-      console.warn('[Pinned] Failed to load candles, using empty set:', err);
-      this.state.candles = [];
-    }
-  }
-
-  private async onSymbolOrTimeframeChange() {
-    this.disconnectWebSocket();
-    await this.loadCandles();
-    this.connectWebSocket();
-  }
-
-  // ── WebSocket ────────────────────────────────────────────────────────────
-
-  private connectWebSocket() {
-    const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-    const url = `${protocol}://${location.host}/ws?symbol=${this.state.symbol}&interval=${this.state.timeframe}`;
-
-    try {
-      const ws = new WebSocket(url);
-
-      ws.addEventListener('open', () => {
-        console.log('[Pinned] WS connected');
-      });
-
-      ws.addEventListener('message', (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          if (msg.type === 'candle') {
-            this.handleCandleUpdate(msg.data as Candle);
-          }
-        } catch { /* ignore bad messages */ }
-      });
-
-      ws.addEventListener('close', () => {
-        console.log('[Pinned] WS disconnected, reconnecting in 3s…');
-        setTimeout(() => this.connectWebSocket(), 3000);
-      });
-
-      ws.addEventListener('error', (err) => {
-        console.warn('[Pinned] WS error', err);
-      });
-
-      this.state.ws = ws;
-    } catch (err) {
-      console.warn('[Pinned] WS connection failed:', err);
-    }
-  }
-
-  private disconnectWebSocket() {
-    if (this.state.ws) {
-      this.state.ws.close();
-      this.state.ws = null;
-    }
-  }
-
-  private handleCandleUpdate(candle: Candle) {
-    const candles = this.state.candles;
-    if (candles.length > 0 && candles[candles.length - 1].time === candle.time) {
-      candles[candles.length - 1] = candle;
-    } else {
-      candles.push(candle);
-    }
-  }
-
-  // ── Render Loop ──────────────────────────────────────────────────────────
-
-  private startRenderLoop() {
-    const loop = () => {
-      this.renderChart();
-      this.animationFrameId = requestAnimationFrame(loop);
-    };
-    this.animationFrameId = requestAnimationFrame(loop);
-  }
-
-  private renderChart() {
-    const ctx = this.chartCtx;
-    const canvas = this.chartCanvas;
-    if (!ctx || !canvas) return;
-
-    const w = canvas.width / (window.devicePixelRatio || 1);
-    const h = canvas.height / (window.devicePixelRatio || 1);
-
-    // Clear
-    ctx.clearRect(0, 0, w, h);
-
-    const candles = this.state.candles;
-    if (candles.length === 0) {
-      // Animated loading state with shimmer effect
-      const centerX = w / 2;
-      const centerY = h / 2;
-
-      // Pulsing circle
-      const now = performance.now();
-      const pulse = 0.3 + 0.2 * Math.sin(now / 600);
-
-      // Spinner ring
-      ctx.save();
-      ctx.translate(centerX, centerY - 28);
-      ctx.rotate((now / 800) % (Math.PI * 2));
-      ctx.strokeStyle = `rgba(99, 102, 241, ${pulse + 0.3})`;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(0, 0, 14, 0, Math.PI * 1.5);
-      ctx.stroke();
-      ctx.restore();
-
-      // Text
-      ctx.fillStyle = '#64748b';
-      ctx.font = '500 13px Inter, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('Connecting to market data\u2026', centerX, centerY + 8);
-
-      // Subtle sub-text
-      ctx.fillStyle = '#475569';
-      ctx.font = '400 11px Inter, sans-serif';
-      ctx.fillText(`${this.state.symbol} \u00B7 ${this.state.timeframe}`, centerX, centerY + 28);
-      return;
-    }
-
-    // ── Compute visible range ──────────────────────────────────────────
-    const candleWidth = 8;
-    const gap = 2;
-    const step = candleWidth + gap;
-    const visibleCount = Math.floor(w / step);
-    const startIdx = Math.max(0, candles.length - visibleCount);
-    const visible = candles.slice(startIdx);
-
-    let minLow = Infinity;
-    let maxHigh = -Infinity;
-    for (const c of visible) {
-      if (c.low < minLow) minLow = c.low;
-      if (c.high > maxHigh) maxHigh = c.high;
-    }
-    const priceRange = maxHigh - minLow || 1;
-    const padding = priceRange * 0.08;
-    const priceLow = minLow - padding;
-    const priceHigh = maxHigh + padding;
-    const totalRange = priceHigh - priceLow;
-
-    const toY = (price: number) => h - ((price - priceLow) / totalRange) * h;
-
-    // ── Grid lines ─────────────────────────────────────────────────────
-    ctx.strokeStyle = '#1f2937';
-    ctx.lineWidth = 1;
-    const gridLines = 6;
-    for (let i = 0; i <= gridLines; i++) {
-      const y = (h / gridLines) * i;
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(w, y);
-      ctx.stroke();
-
-      // Price label
-      const price = priceHigh - (totalRange / gridLines) * i;
-      ctx.fillStyle = '#6b7280';
-      ctx.font = '11px JetBrains Mono, monospace';
-      ctx.textAlign = 'right';
-      ctx.fillText(price.toFixed(2), w - 6, y - 4);
-    }
-
-    // ── Candles ─────────────────────────────────────────────────────────
-    for (let i = 0; i < visible.length; i++) {
-      const c = visible[i];
-      const x = i * step + step / 2;
-      const isBull = c.close >= c.open;
-      const color = isBull ? '#22c55e' : '#ef4444';
-
-      // Wick
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(x, toY(c.high));
-      ctx.lineTo(x, toY(c.low));
-      ctx.stroke();
-
-      // Body
-      const bodyTop = toY(Math.max(c.open, c.close));
-      const bodyBot = toY(Math.min(c.open, c.close));
-      const bodyH = Math.max(bodyBot - bodyTop, 1);
-
-      ctx.fillStyle = color;
-      ctx.fillRect(x - candleWidth / 2, bodyTop, candleWidth, bodyH);
-    }
-  }
-
-  // ── Toast Notifications ──────────────────────────────────────────────────
 
   private showToast(message: string, duration = 1500) {
     const container = document.getElementById('toastContainer');
@@ -468,21 +287,17 @@ class PinnedApp {
     toast.className = 'toast';
     toast.textContent = message;
     container.appendChild(toast);
-
     requestAnimationFrame(() => toast.classList.add('toast--visible'));
-
     setTimeout(() => {
       toast.classList.remove('toast--visible');
       toast.addEventListener('transitionend', () => toast.remove());
     }, duration);
   }
 
-  // ── Cleanup ──────────────────────────────────────────────────────────────
-
   destroy() {
-    this.disconnectWebSocket();
-    if (this.animationFrameId !== null) cancelAnimationFrame(this.animationFrameId);
-    if (this.resizeObserver) this.resizeObserver.disconnect();
+    for (const pane of this.panes.values()) pane.destroy();
+    this.panes.clear();
+    if (this.ws) { this.ws.close(); this.ws = null; }
   }
 }
 

@@ -411,6 +411,654 @@ body {
   left: 0;
 }
 
+/* ── Chart Area (new multi-pane layout) ───────────────────────────────────── */
+.chart-area {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  min-width: 0;
+  background: var(--bg-primary);
+}
+
+.multi-chart-mount {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+.toolbar-mount {
+  flex-shrink: 0;
+  z-index: 50;
+}
+
+.properties-mount {
+  flex-shrink: 0;
+  z-index: 50;
+}
+
+/* ── Multi-Chart Grid ─────────────────────────────────────────────────────── */
+.multi-chart-grid {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  gap: 2px;
+  background: var(--border);
+}
+
+/* ── Chart Pane ───────────────────────────────────────────────────────────── */
+.chart-pane {
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-primary);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid transparent;
+  transition: border-color var(--transition);
+}
+
+.chart-pane:hover {
+  border-color: rgba(99, 102, 241, 0.15);
+}
+
+.chart-pane.active {
+  border-color: rgba(99, 102, 241, 0.4);
+  z-index: 1;
+}
+
+.pane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 28px;
+  min-height: 28px;
+  padding: 0 8px;
+  background: rgba(17, 24, 39, 0.6);
+  border-bottom: 1px solid var(--border-subtle);
+  user-select: none;
+  gap: 8px;
+  z-index: 5;
+}
+
+.pane-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.pane-symbol {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.pane-exchange {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.pane-timeframe {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-dim);
+  padding: 1px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.pane-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity var(--transition);
+}
+
+.chart-pane:hover .pane-actions {
+  opacity: 1;
+}
+
+.pane-action-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all var(--transition);
+  padding: 0;
+}
+
+.pane-action-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+}
+
+.pane-action-btn.close:hover {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--danger);
+}
+
+.pane-canvas-container {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.pane-canvas-container canvas {
+  display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+/* ── Layout Selector ──────────────────────────────────────────────────────── */
+.layout-selector {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.layout-btn {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition);
+  padding: 3px;
+  color: var(--text-muted);
+}
+
+.layout-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-primary);
+}
+
+.layout-btn.active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.layout-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* ── Drawing Toolbar (left floating) ──────────────────────────────────────── */
+.tool-bar {
+  display: flex;
+  flex-direction: column;
+  width: 46px;
+  background: linear-gradient(180deg, rgba(17, 24, 39, 0.98) 0%, rgba(15, 20, 32, 0.98) 100%);
+  border-right: 1px solid var(--border);
+  padding: 6px 4px;
+  gap: 2px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  z-index: 50;
+  position: relative;
+}
+
+.tool-bar::-webkit-scrollbar {
+  width: 0;
+}
+
+.tb-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border-subtle);
+}
+
+.tb-btn {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-smooth);
+  position: relative;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.tb-btn:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--border-hover);
+}
+
+.tb-btn:active {
+  transform: scale(0.92);
+}
+
+.tb-btn.active {
+  color: var(--accent);
+  background: var(--accent-dim);
+  border-color: rgba(99, 102, 241, 0.3);
+}
+
+.tb-btn svg {
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+}
+
+/* Category expand indicator */
+.tb-btn.has-submenu::after {
+  content: '';
+  position: absolute;
+  bottom: 3px;
+  right: 3px;
+  width: 0;
+  height: 0;
+  border-left: 3px solid transparent;
+  border-bottom: 3px solid var(--text-muted);
+  opacity: 0.6;
+}
+
+.tb-btn.has-submenu:hover::after {
+  border-bottom-color: var(--text-primary);
+  opacity: 1;
+}
+
+/* Toolbar tooltip */
+.tb-btn[title]::before {
+  content: attr(title);
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%) translateX(4px);
+  background: rgba(17, 24, 39, 0.96);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--transition), transform var(--transition);
+  z-index: 200;
+  box-shadow: var(--shadow-md);
+}
+
+.tb-btn[title]:hover::before {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+
+/* ── Submenu (expands right of toolbar) ───────────────────────────────────── */
+.tb-submenu {
+  position: absolute;
+  left: 100%;
+  top: 0;
+  margin-left: 4px;
+  background: rgba(17, 24, 39, 0.97);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 4px;
+  min-width: 160px;
+  box-shadow: var(--shadow-lg);
+  z-index: 200;
+  animation: slideRight 150ms ease;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+@keyframes slideRight {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.tb-sub-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.tb-sub-item:hover {
+  background: var(--accent-dim);
+  color: var(--text-primary);
+}
+
+.tb-sub-item.active {
+  color: var(--accent);
+  background: rgba(99, 102, 241, 0.08);
+}
+
+.tb-sub-item svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.tb-sub-item .shortcut {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+/* ── Properties Panel (right floating) ────────────────────────────────────── */
+.props-panel {
+  width: 220px;
+  background: linear-gradient(180deg, rgba(17, 24, 39, 0.98) 0%, rgba(15, 20, 32, 0.98) 100%);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  z-index: 50;
+  transition: width var(--transition-smooth), opacity var(--transition-smooth);
+}
+
+.props-panel.collapsed {
+  width: 0;
+  border-left-width: 0;
+  opacity: 0;
+  overflow: hidden;
+}
+
+.pp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.pp-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.pp-close {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all var(--transition);
+  padding: 0;
+  font-size: 14px;
+}
+
+.pp-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+}
+
+.pp-section {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.pp-section-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+/* Color Swatches */
+.pp-colors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.pp-color-swatch {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: all var(--transition);
+  position: relative;
+}
+
+.pp-color-swatch:hover {
+  transform: scale(1.15);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.pp-color-swatch.active {
+  border-color: #fff;
+  box-shadow: 0 0 0 2px var(--accent), 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+/* Line Width Buttons */
+.pp-line-widths {
+  display: flex;
+  gap: 4px;
+}
+
+.pp-width-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  width: 32px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+}
+
+.pp-width-btn:hover {
+  border-color: var(--border-hover);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.pp-width-btn.active {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+/* Line Style Buttons */
+.pp-line-styles {
+  display: flex;
+  gap: 4px;
+}
+
+.pp-style-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+  color: var(--text-muted);
+  height: 28px;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition);
+  padding: 0 8px;
+}
+
+.pp-style-btn:hover {
+  border-color: var(--border-hover);
+}
+
+.pp-style-btn.active {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.pp-style-btn svg {
+  width: 100%;
+  height: 4px;
+}
+
+/* Opacity Slider */
+.pp-slider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pp-slider input[type="range"] {
+  flex: 1;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--border);
+  border-radius: 2px;
+  outline: none;
+}
+
+.pp-slider input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  border: 2px solid var(--bg-primary);
+  box-shadow: 0 0 0 2px var(--accent);
+  transition: transform var(--transition);
+}
+
+.pp-slider input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+
+.pp-slider-value {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  min-width: 32px;
+  text-align: right;
+}
+
+/* Text Input */
+.pp-text-input {
+  width: 100%;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  transition: border-color var(--transition);
+}
+
+.pp-text-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
+
+/* Action Buttons in Properties Panel */
+.pp-actions {
+  display: flex;
+  gap: 6px;
+  padding: 10px 12px;
+}
+
+.pp-action-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  flex: 1;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.pp-action-btn:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--border-hover);
+  color: var(--text-primary);
+}
+
+.pp-action-btn.delete:hover {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: var(--danger);
+}
+
+.pp-action-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
 /* ── Crosshair Info ───────────────────────────────────────────────────────── */
 .crosshair-info {
   position: absolute;
