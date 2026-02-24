@@ -39,6 +39,14 @@ const tradesQuerySchema = z.object({
   sortDir: z.enum(['asc', 'desc']).default('desc'),
 });
 
+// Safe sort column mapping — prevents SQL injection even if enum validation is weakened
+const SORT_COLUMNS: Record<string, string> = {
+  entry_time: 'entry_time',
+  exit_time: 'exit_time',
+  pnl: 'pnl',
+  symbol: 'symbol',
+};
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 interface ExchangeTrade {
@@ -168,6 +176,10 @@ router.get('/trades', async (req: Request, res: Response) => {
     const where = conditions.join(' AND ');
     const offset = (params.page - 1) * params.limit;
 
+    // Use safe column mapping to prevent ORDER BY injection
+    const sortColumn = SORT_COLUMNS[params.sortBy] || 'exit_time';
+    const sortDirection = params.sortDir === 'asc' ? 'ASC' : 'DESC';
+
     // Count
     const countResult = await pool.query(
       `SELECT COUNT(*) AS total FROM user_trades WHERE ${where}`,
@@ -182,7 +194,7 @@ router.get('/trades', async (req: Request, res: Response) => {
               size, pnl, fees, created_at
        FROM user_trades
        WHERE ${where}
-       ORDER BY ${params.sortBy} ${params.sortDir}
+       ORDER BY ${sortColumn} ${sortDirection}
        LIMIT $${paramIdx++} OFFSET $${paramIdx++}`,
       [...values, params.limit, offset],
     );
@@ -262,9 +274,9 @@ router.get('/analytics', async (req: Request, res: Response) => {
       tradeCount: parseInt(row.trade_count, 10),
     }));
 
-    // Max drawdown (compute from ordered trades)
+    // Max drawdown (compute from ordered trades, capped at 10000)
     const tradesResult = await pool.query(
-      `SELECT pnl FROM user_trades WHERE user_id = $1 ORDER BY exit_time ASC`,
+      `SELECT pnl FROM user_trades WHERE user_id = $1 ORDER BY exit_time ASC LIMIT 10000`,
       [userId],
     );
 
@@ -346,7 +358,8 @@ router.get('/equity-curve', async (req: Request, res: Response) => {
          pnl
        FROM user_trades
        WHERE user_id = $1
-       ORDER BY exit_time ASC`,
+       ORDER BY exit_time ASC
+       LIMIT 10000`,
       [userId],
     );
 
@@ -423,7 +436,7 @@ async function fetchBlofinTrades(
       return [];
     }
 
-    const data = await res.json();
+    const data = (await res.json()) as Record<string, any>;
     const orders = data?.data || [];
 
     return orders.map((order: any) => ({

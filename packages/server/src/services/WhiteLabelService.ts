@@ -11,19 +11,22 @@ import { logger } from '../utils/logger';
 
 // ─── Schema & Types ────────────────────────────────────────────────────────────
 
+const hexColorRegex = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+const safeFontRegex = /^[a-zA-Z0-9\s,\-_'"]+$/;
+
 const themeColorsSchema = z.object({
-  bg: z.string().min(1),
-  bgSecondary: z.string().min(1),
-  bull: z.string().min(1),
-  bear: z.string().min(1),
-  accent: z.string().min(1),
-  text: z.string().min(1),
-  textSecondary: z.string().min(1),
+  bg: z.string().regex(hexColorRegex, 'Invalid hex color'),
+  bgSecondary: z.string().regex(hexColorRegex, 'Invalid hex color'),
+  bull: z.string().regex(hexColorRegex, 'Invalid hex color'),
+  bear: z.string().regex(hexColorRegex, 'Invalid hex color'),
+  accent: z.string().regex(hexColorRegex, 'Invalid hex color'),
+  text: z.string().regex(hexColorRegex, 'Invalid hex color'),
+  textSecondary: z.string().regex(hexColorRegex, 'Invalid hex color'),
 });
 
 const themeFontsSchema = z.object({
-  primary: z.string().min(1),
-  mono: z.string().min(1),
+  primary: z.string().min(1).max(200).regex(safeFontRegex, 'Invalid font name'),
+  mono: z.string().min(1).max(200).regex(safeFontRegex, 'Invalid font name'),
 });
 
 const themeDefaultsSchema = z.object({
@@ -46,7 +49,7 @@ const themeBrandingSchema = z.object({
 
 const themeConfigSchema = z.object({
   name: z.string().min(1).max(100),
-  logo: z.string().max(2048).optional(),
+  logo: z.string().url().max(2048).optional(),
   colors: themeColorsSchema,
   fonts: themeFontsSchema,
   defaults: themeDefaultsSchema,
@@ -181,9 +184,10 @@ class WhiteLabelService {
       `  --pinned-badge-display: ${theme.branding.hidePinnedBadge ? 'none' : 'block'};`,
     );
 
-    // Logo
+    // Logo — sanitise the URL to prevent CSS injection
     if (theme.logo) {
-      lines.push(`  --pinned-logo: url('${theme.logo}');`);
+      const safeUrl = theme.logo.replace(/['";{}()]/g, '');
+      lines.push(`  --pinned-logo: url('${safeUrl}');`);
     }
 
     lines.push('}');

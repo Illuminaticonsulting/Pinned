@@ -9,10 +9,8 @@ const configSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3001),
   WS_PORT: z.coerce.number().int().positive().default(3002),
 
-  JWT_SECRET: z.string().default('dev-jwt-secret-change-in-production'),
-  JWT_REFRESH_SECRET: z
-    .string()
-    .default('dev-refresh-secret-change-in-production'),
+  JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
+  JWT_REFRESH_SECRET: z.string().min(32, 'JWT_REFRESH_SECRET must be at least 32 characters'),
   JWT_EXPIRY: z.string().default('15m'),
   JWT_REFRESH_EXPIRY: z.string().default('7d'),
 
@@ -49,14 +47,34 @@ const configSchema = z.object({
 
 export type Config = z.infer<typeof configSchema>;
 
-const parsed = configSchema.safeParse(process.env);
+// In dev mode, provide safe defaults for JWT secrets if not set
+const envWithDefaults = {
+  ...process.env,
+  ...(process.env.NODE_ENV !== 'production' && !process.env.JWT_SECRET
+    ? {
+        JWT_SECRET: 'dev-only-jwt-secret-32chars-minimum!!',
+        JWT_REFRESH_SECRET: 'dev-only-refresh-secret-32chars-min!!',
+      }
+    : {}),
+};
+
+const parsed = configSchema.safeParse(envWithDefaults);
 
 if (!parsed.success) {
   console.error(
-    '❌ Invalid environment configuration:',
+    '\u274c Invalid environment configuration:',
     parsed.error.format(),
   );
   throw new Error('Invalid environment configuration');
+}
+
+// Safety check: block known weak secrets in production
+if (
+  parsed.data.NODE_ENV === 'production' &&
+  (parsed.data.JWT_SECRET.includes('dev-') ||
+    parsed.data.JWT_SECRET.includes('change-in-production'))
+) {
+  throw new Error('CRITICAL: Do not use dev JWT secrets in production');
 }
 
 export const config: Config = parsed.data;

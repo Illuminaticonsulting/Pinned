@@ -72,7 +72,7 @@ describe('Auth middleware', () => {
   const JWT_SECRET = 'test-jwt-secret';
 
   describe('verifyToken', () => {
-    it('passes through with valid JWT and populates req.user', () => {
+    it('passes through with valid JWT and populates req.user', async () => {
       const token = jwt.sign(
         { userId: 'user-1', email: 'test@pinned.dev' },
         JWT_SECRET,
@@ -85,7 +85,7 @@ describe('Auth middleware', () => {
       const res = mockRes();
       const next = mockNext();
 
-      verifyToken(req, res, next);
+      await verifyToken(req, res, next);
 
       expect(next).toHaveBeenCalled();
       expect(req.user).toBeDefined();
@@ -164,7 +164,7 @@ describe('Auth middleware', () => {
       expect(res.status).toHaveBeenCalledWith(401);
     });
 
-    it('reads token from cookies if no Authorization header', () => {
+    it('reads token from cookies if no Authorization header', async () => {
       const token = jwt.sign(
         { userId: 'user-2', email: 'cookie@pinned.dev' },
         JWT_SECRET,
@@ -177,7 +177,7 @@ describe('Auth middleware', () => {
       const res = mockRes();
       const next = mockNext();
 
-      verifyToken(req, res, next);
+      await verifyToken(req, res, next);
 
       expect(next).toHaveBeenCalled();
       expect(req.user!.userId).toBe('user-2');

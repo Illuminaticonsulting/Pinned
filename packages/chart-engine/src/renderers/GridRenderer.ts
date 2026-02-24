@@ -9,11 +9,12 @@ import type { ChartStateData } from '../core/ChartState';
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
 const BG_COLOR = '#0a0e17';
-const GRID_COLOR = 'rgba(55, 65, 81, 0.5)';
+const GRID_COLOR = 'rgba(148, 163, 184, 0.06)';
+const GRID_SUB_COLOR = 'rgba(148, 163, 184, 0.025)';
 const GRID_LINE_WIDTH = 0.5;
-const LABEL_COLOR = '#9ca3af';
+const LABEL_COLOR = '#64748b';
 const LABEL_FONT = '11px JetBrains Mono, monospace';
-const BORDER_COLOR = '#374151';
+const BORDER_COLOR = 'rgba(148, 163, 184, 0.1)';
 const CURRENT_PRICE_COLOR = '#eab308';
 
 const RIGHT_MARGIN = 80;
@@ -122,10 +123,26 @@ export function renderGrid(
   const priceInterval = pickPriceInterval(priceRange);
   const firstPrice = Math.ceil(priceLow / priceInterval) * priceInterval;
 
-  ctx.strokeStyle = GRID_COLOR;
-  ctx.lineWidth = GRID_LINE_WIDTH;
   ctx.fillStyle = LABEL_COLOR;
   ctx.textAlign = 'left';
+
+  // Sub-grid (half intervals)
+  const subInterval = priceInterval / 2;
+  const firstSubPrice = Math.ceil(priceLow / subInterval) * subInterval;
+  ctx.strokeStyle = GRID_SUB_COLOR;
+  ctx.lineWidth = 0.5;
+  for (let p = firstSubPrice; p <= priceHigh; p += subInterval) {
+    const y = viewport.priceToY(p);
+    if (y < 0 || y > chartH) continue;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(chartW, y);
+    ctx.stroke();
+  }
+
+  // Main grid
+  ctx.strokeStyle = GRID_COLOR;
+  ctx.lineWidth = GRID_LINE_WIDTH;
 
   for (let p = firstPrice; p <= priceHigh; p += priceInterval) {
     const y = viewport.priceToY(p);

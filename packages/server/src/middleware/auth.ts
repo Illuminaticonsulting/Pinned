@@ -28,13 +28,13 @@ export function generateTokens(userId: string, email: string): {
   const accessToken = jwt.sign(
     { userId, email } as UserPayload,
     config.JWT_SECRET,
-    { expiresIn: config.JWT_EXPIRY },
+    { expiresIn: config.JWT_EXPIRY as string, algorithm: 'HS256' } as jwt.SignOptions,
   );
 
   const refreshToken = jwt.sign(
     { userId, email, type: 'refresh' } as UserPayload & { type: string },
     config.JWT_REFRESH_SECRET,
-    { expiresIn: config.JWT_REFRESH_EXPIRY },
+    { expiresIn: config.JWT_REFRESH_EXPIRY as string, algorithm: 'HS256' } as jwt.SignOptions,
   );
 
   return { accessToken, refreshToken };
@@ -44,7 +44,7 @@ export function generateTokens(userId: string, email: string): {
 
 export function verifyRefreshToken(token: string): UserPayload {
   try {
-    const payload = jwt.verify(token, config.JWT_REFRESH_SECRET) as UserPayload & { type?: string };
+    const payload = jwt.verify(token, config.JWT_REFRESH_SECRET, { algorithms: ['HS256'] }) as UserPayload & { type?: string };
     if (!payload.userId || !payload.email) {
       throw new Error('Invalid refresh token payload');
     }
@@ -73,7 +73,7 @@ function extractToken(req: Request): string | null {
 
 // ─── Middleware: verifyToken ─────────────────────────────────────────────────
 
-export function verifyToken(req: Request, res: Response, next: NextFunction): void {
+export async function verifyToken(req: Request, res: Response, next: NextFunction): Promise<void> {
   const token = extractToken(req);
 
   if (!token) {
@@ -82,11 +82,26 @@ export function verifyToken(req: Request, res: Response, next: NextFunction): vo
   }
 
   try {
-    const payload = jwt.verify(token, config.JWT_SECRET) as UserPayload;
+    const payload = jwt.verify(token, config.JWT_SECRET, { algorithms: ['HS256'] }) as UserPayload;
 
     if (!payload.userId || !payload.email) {
       res.status(401).json({ error: 'Invalid token payload' });
       return;
+    }
+
+    // Check access token blacklist (revoked on logout)
+    try {
+      const revoked = await redis.get(`at_blacklist:${token}`);
+      if (revoked) {
+        res.status(401).json({ error: 'Token has been revoked' });
+        return;
+      }
+    } catch {
+      // Redis unavailable — fail closed in production
+      if (config.NODE_ENV === 'production') {
+        res.status(503).json({ error: 'Service temporarily unavailable' });
+        return;
+      }
     }
 
     req.user = payload;
@@ -117,7 +132,7 @@ export function optionalAuth(req: Request, res: Response, next: NextFunction): v
   }
 
   try {
-    const payload = jwt.verify(token, config.JWT_SECRET) as UserPayload;
+    const payload = jwt.verify(token, config.JWT_SECRET, { algorithms: ['HS256'] }) as UserPayload;
     if (payload.userId && payload.email) {
       req.user = payload;
     }
@@ -188,11 +203,15 @@ function createRateLimiter(cfg: RateLimitConfig) {
 
       next();
     } catch (err) {
-      // If Redis is down, allow the request through
-      logger.warn('Rate limiter: Redis error, allowing request', {
+      // If Redis is down, fail closed in production to prevent brute-force
+      logger.warn('Rate limiter: Redis error', {
         error: String(err),
         ip,
       });
+      if (config.NODE_ENV === 'production') {
+        res.status(503).json({ error: 'Service temporarily unavailable' });
+        return;
+      }
       next();
     }
   };

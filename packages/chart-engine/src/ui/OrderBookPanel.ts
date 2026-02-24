@@ -105,24 +105,30 @@ const STYLES = {
   levelRow: {
     display: 'flex',
     alignItems: 'center',
-    height: '20px',
-    padding: '0 6px',
+    height: '22px',
+    padding: '0 8px',
     position: 'relative',
-    transition: 'background 200ms ease',
+    transition: 'background 150ms ease, box-shadow 400ms ease-out',
     flexShrink: '0',
+    cursor: 'pointer',
+    borderBottom: '1px solid rgba(148, 163, 184, 0.03)',
+  } as Partial<CSSStyleDeclaration>,
+  levelRowHover: {
+    background: 'rgba(255, 255, 255, 0.04)',
   } as Partial<CSSStyleDeclaration>,
   spreadRow: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    height: '24px',
-    background: '#1f2937',
+    height: '28px',
+    background: 'linear-gradient(90deg, rgba(244, 63, 94, 0.06) 0%, rgba(16, 185, 129, 0.06) 100%)',
     fontWeight: '700',
     fontSize: '12px',
-    color: '#e5e7eb',
-    borderTop: '1px solid #374151',
-    borderBottom: '1px solid #374151',
+    color: '#f1f5f9',
+    borderTop: '1px solid rgba(148, 163, 184, 0.08)',
+    borderBottom: '1px solid rgba(148, 163, 184, 0.08)',
     flexShrink: '0',
+    letterSpacing: '0.02em',
   } as Partial<CSSStyleDeclaration>,
   priceText: {
     width: '50%',
@@ -356,14 +362,16 @@ export class OrderBookPanel {
   private createLevelRow(side: 'ask' | 'bid'): LevelRow {
     const el = document.createElement('div');
     this.applyStyles(el, STYLES.levelRow);
+    el.addEventListener('mouseenter', () => { el.style.background = 'rgba(255, 255, 255, 0.04)'; });
+    el.addEventListener('mouseleave', () => { el.style.background = ''; });
 
     const priceEl = document.createElement('span');
     this.applyStyles(priceEl, STYLES.priceText);
-    priceEl.style.color = side === 'ask' ? '#ef4444' : '#22c55e';
+    priceEl.style.color = side === 'ask' ? '#f43f5e' : '#10b981';
 
     const sizeBarEl = document.createElement('div');
     this.applyStyles(sizeBarEl, STYLES.sizeBar);
-    sizeBarEl.style.background = side === 'ask' ? '#ef4444' : '#22c55e';
+    sizeBarEl.style.background = side === 'ask' ? '#f43f5e' : '#10b981';
     if (side === 'ask') {
       sizeBarEl.style.right = '50%';
     } else {
@@ -435,15 +443,15 @@ export class OrderBookPanel {
 
   private flashRow(el: HTMLDivElement, increased: boolean): void {
     const flashColor = increased
-      ? 'rgba(234, 179, 8, 0.2)' // yellow for increase
-      : 'rgba(107, 114, 128, 0.1)'; // subtle fade for decrease
+      ? 'rgba(250, 204, 21, 0.18)'
+      : 'rgba(148, 163, 184, 0.06)';
 
     el.style.transition = 'none';
     el.style.boxShadow = `inset 0 0 0 100px ${flashColor}`;
-    requestAnimationFrame(() => {
-      el.style.transition = 'box-shadow 600ms ease-out';
-      el.style.boxShadow = 'none';
-    });
+    // Force reflow
+    void el.offsetWidth;
+    el.style.transition = 'box-shadow 500ms cubic-bezier(0.4, 0, 0.2, 1)';
+    el.style.boxShadow = 'none';
   }
 
   // ── Absorption ───────────────────────────────────────────────────────────

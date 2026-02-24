@@ -132,7 +132,8 @@ class SharedChartService {
       `SELECT id, user_id, state, view_count, created_at
        FROM shared_charts
        WHERE user_id = $1
-       ORDER BY created_at DESC`,
+       ORDER BY created_at DESC
+       LIMIT 100`,
       [userId],
     );
 

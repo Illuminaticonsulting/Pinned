@@ -49,7 +49,7 @@ const updateProfileSchema = z.object({
 
 const COOKIE_OPTIONS = {
   httpOnly: true,
-  secure: config.NODE_ENV === 'production',
+  secure: config.NODE_ENV !== 'dev',
   sameSite: 'lax' as const,
   path: '/',
 };
@@ -69,7 +69,8 @@ router.post('/register', authRateLimiter, async (req: Request, res: Response) =>
     // Check if user already exists
     const existing = await pool.query('SELECT id FROM users WHERE email = $1', [email.toLowerCase()]);
     if (existing.rows.length > 0) {
-      res.status(409).json({ error: 'Email already registered' });
+      // Return generic error to prevent user enumeration
+      res.status(400).json({ error: 'Unable to create account' });
       return;
     }
 
@@ -212,6 +213,13 @@ router.post('/refresh', authRateLimiter, async (req: Request, res: Response) => 
       return;
     }
 
+    // Verify user still exists in database
+    const userCheck = await pool.query('SELECT id FROM users WHERE id = $1', [payload.userId]);
+    if (userCheck.rows.length === 0) {
+      res.status(401).json({ error: 'Account no longer exists' });
+      return;
+    }
+
     // Blacklist old refresh token (TTL = refresh token expiry)
     await redis.set(`rt_blacklist:${refreshToken}`, '1', 'EX', 7 * 24 * 3600);
 
@@ -233,13 +241,21 @@ router.post('/refresh', authRateLimiter, async (req: Request, res: Response) => 
 
 // ─── POST /logout ────────────────────────────────────────────────────────────
 
-router.post('/logout', async (req: Request, res: Response) => {
+router.post('/logout', verifyToken, async (req: Request, res: Response) => {
   try {
     const { refreshToken } = req.body || {};
 
     // Blacklist refresh token if provided
     if (refreshToken && typeof refreshToken === 'string') {
       await redis.set(`rt_blacklist:${refreshToken}`, '1', 'EX', 7 * 24 * 3600);
+    }
+
+    // Blacklist current access token (TTL = access token expiry, max 15min)
+    const accessToken = req.headers.authorization?.startsWith('Bearer ')
+      ? req.headers.authorization.slice(7)
+      : req.cookies?.access_token;
+    if (accessToken) {
+      await redis.set(`at_blacklist:${accessToken}`, '1', 'EX', 900);
     }
 
     // Clear cookies

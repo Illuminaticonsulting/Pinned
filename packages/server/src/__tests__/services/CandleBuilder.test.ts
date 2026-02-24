@@ -128,7 +128,7 @@ describe('CandleBuilderService', () => {
       // Trade in minute 2 (bucket = 120_000) — triggers close of minute 1
       processTrade(service, makeTrade({ time: 120_000, price: 36100, size: 0.5 }));
 
-      expect(closeCandle).toHaveBeenCalledTimes(6); // once for each of the 6 timeframes
+      expect(closeCandle).toHaveBeenCalledTimes(1); // only 1m crosses boundary (60s→120s); 5m/15m/1h/4h/1d stay in same bucket
       closeCandle.mockRestore();
     });
   });

@@ -8,12 +8,12 @@ import type { ChartStateData, Candle } from '../core/ChartState';
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
-const BULL_COLOR = '#22c55e';
-const BEAR_COLOR = '#ef4444';
-const BULL_WICK_COLOR = 'rgba(34, 197, 94, 0.7)';
-const BEAR_WICK_COLOR = 'rgba(239, 68, 68, 0.7)';
-const BULL_VOL_COLOR = 'rgba(34, 197, 94, 0.20)';
-const BEAR_VOL_COLOR = 'rgba(239, 68, 68, 0.20)';
+const BULL_COLOR = '#10b981';
+const BEAR_COLOR = '#f43f5e';
+const BULL_WICK_COLOR = 'rgba(16, 185, 129, 0.65)';
+const BEAR_WICK_COLOR = 'rgba(244, 63, 94, 0.65)';
+const BULL_VOL_COLOR = 'rgba(16, 185, 129, 0.15)';
+const BEAR_VOL_COLOR = 'rgba(244, 63, 94, 0.15)';
 
 const MIN_CANDLE_WIDTH = 3;
 const MAX_CANDLE_WIDTH = 50;
@@ -131,15 +131,23 @@ export function renderCandlesticks(
 
     // Pulsing glow via a time-based alpha oscillation
     const now = performance.now();
-    const pulse = 0.3 + 0.3 * Math.sin(now / 400);
+    const pulse = 0.2 + 0.25 * Math.sin(now / 500);
     const bull = isBull(live);
-    const glowColor = bull
-      ? `rgba(34, 197, 94, ${pulse.toFixed(2)})`
-      : `rgba(239, 68, 68, ${pulse.toFixed(2)})`;
+    const baseColor = bull ? [16, 185, 129] : [244, 63, 94];
+    const glowColor = `rgba(${baseColor.join(',')}, ${pulse.toFixed(2)})`;
 
+    // Outer soft glow
+    ctx.shadowColor = `rgba(${baseColor.join(',')}, ${(pulse * 0.5).toFixed(2)})`;
+    ctx.shadowBlur = 12;
     ctx.strokeStyle = glowColor;
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 1.5;
     ctx.strokeRect(cx - halfBody - 1, bodyTop - 1, bodyW + 2, bodyHeight + 2);
+    ctx.shadowBlur = 0;
+
+    // Inner bright border
+    ctx.strokeStyle = `rgba(${baseColor.join(',')}, ${(pulse + 0.2).toFixed(2)})`;
+    ctx.lineWidth = 0.5;
+    ctx.strokeRect(cx - halfBody, bodyTop, bodyW, bodyHeight);
   }
 
   ctx.restore();

@@ -361,11 +361,35 @@ class PinnedApp {
 
     const candles = this.state.candles;
     if (candles.length === 0) {
-      // Empty state
-      ctx.fillStyle = '#6b7280';
-      ctx.font = '500 14px Inter, sans-serif';
+      // Animated loading state with shimmer effect
+      const centerX = w / 2;
+      const centerY = h / 2;
+
+      // Pulsing circle
+      const now = performance.now();
+      const pulse = 0.3 + 0.2 * Math.sin(now / 600);
+
+      // Spinner ring
+      ctx.save();
+      ctx.translate(centerX, centerY - 28);
+      ctx.rotate((now / 800) % (Math.PI * 2));
+      ctx.strokeStyle = `rgba(99, 102, 241, ${pulse + 0.3})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, 14, 0, Math.PI * 1.5);
+      ctx.stroke();
+      ctx.restore();
+
+      // Text
+      ctx.fillStyle = '#64748b';
+      ctx.font = '500 13px Inter, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('Connecting to market data…', w / 2, h / 2);
+      ctx.fillText('Connecting to market data\u2026', centerX, centerY + 8);
+
+      // Subtle sub-text
+      ctx.fillStyle = '#475569';
+      ctx.font = '400 11px Inter, sans-serif';
+      ctx.fillText(`${this.state.symbol} \u00B7 ${this.state.timeframe}`, centerX, centerY + 28);
       return;
     }
 

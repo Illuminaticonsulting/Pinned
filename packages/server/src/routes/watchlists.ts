@@ -33,7 +33,8 @@ router.get('/', async (req: Request, res: Response) => {
       `SELECT id, name, symbols, created_at, updated_at
        FROM watchlists
        WHERE user_id = $1
-       ORDER BY created_at ASC`,
+       ORDER BY created_at ASC
+       LIMIT 100`,
       [userId],
     );
 

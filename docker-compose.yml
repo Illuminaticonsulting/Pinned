@@ -2,15 +2,15 @@ version: '3.8'
 
 services:
   timescaledb:
-    image: timescale/timescaledb:latest-pg16
+    image: timescale/timescaledb:2.14.2-pg16
     ports:
-      - '5432:5432'
+      - '127.0.0.1:5432:5432'
     volumes:
       - pinned_pgdata:/var/lib/postgresql/data
     environment:
       POSTGRES_DB: pinned
       POSTGRES_USER: pinned
-      POSTGRES_PASSWORD: pinned_dev
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pinned_dev}
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U pinned -d pinned']
       interval: 10s
@@ -21,10 +21,10 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - '6379:6379'
+      - '127.0.0.1:6379:6379'
     volumes:
       - pinned_redis:/data
-    command: redis-server --maxmemory 2gb --maxmemory-policy allkeys-lru --appendonly yes
+    command: redis-server --maxmemory 2gb --maxmemory-policy allkeys-lru --appendonly yes --requirepass ${REDIS_PASSWORD:-pinned_dev_redis}
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
       interval: 10s

@@ -244,44 +244,36 @@ describe('PatternDetectionService', () => {
       const price = 35000;
       const now = Date.now();
 
-      // Simulate fills with large trade volume vs small size decrease
+      // Simulate fills interleaved with additions (level absorbs fills and gets refilled)
+      // Fill: tradeVolume += 3, sizeDecrease += 3
       await processDelta(service, 'blofin', 'BTC-USDT', makeDelta({
-        price, sizeDelta: -2, type: 'fill', time: now,
+        price, sizeDelta: -3, type: 'fill', time: now,
       }));
+      // Addition (refill): sizeDecrease = max(0, 3-2) = 1
       await processDelta(service, 'blofin', 'BTC-USDT', makeDelta({
-        price, sizeDelta: -1, type: 'fill', time: now + 100,
-      }));
-
-      // More fills at the same level — total trade volume accumulates
-      // but size decrease is small (indicating the level absorbs)
-      await processDelta(service, 'blofin', 'BTC-USDT', makeDelta({
-        price, sizeDelta: -1, type: 'fill', time: now + 200,
+        price, sizeDelta: 2, type: 'addition', time: now + 100,
       }));
 
-      // The tracker accumulates: tradeVolume = 2+1+1 = 4, sizeDecrease = 2+1+1 = 4
-      // ratio = 4/4 = 1.0 which is < 3, need more trade volume
-      // Let's add explicit fill events to push ratio above 3
+      // Fill: tradeVolume = 6, sizeDecrease = 1+3 = 4
       await processDelta(service, 'blofin', 'BTC-USDT', makeDelta({
-        price, sizeDelta: -1, type: 'fill', time: now + 300,
+        price, sizeDelta: -3, type: 'fill', time: now + 200,
       }));
+      // Addition (refill): sizeDecrease = max(0, 4-3) = 1
       await processDelta(service, 'blofin', 'BTC-USDT', makeDelta({
-        price, sizeDelta: -1, type: 'fill', time: now + 400,
-      }));
-      await processDelta(service, 'blofin', 'BTC-USDT', makeDelta({
-        price, sizeDelta: -1, type: 'fill', time: now + 500,
-      }));
-      await processDelta(service, 'blofin', 'BTC-USDT', makeDelta({
-        price, sizeDelta: -1, type: 'fill', time: now + 600,
-      }));
-      await processDelta(service, 'blofin', 'BTC-USDT', makeDelta({
-        price, sizeDelta: -1, type: 'fill', time: now + 700,
-      }));
-      await processDelta(service, 'blofin', 'BTC-USDT', makeDelta({
-        price, sizeDelta: -1, type: 'fill', time: now + 800,
+        price, sizeDelta: 3, type: 'addition', time: now + 300,
       }));
 
-      // By now tradeVolume and sizeDecrease should accumulate such that
-      // ratio exceeds the threshold
+      // Fill: tradeVolume = 9, sizeDecrease = 1+3 = 4
+      await processDelta(service, 'blofin', 'BTC-USDT', makeDelta({
+        price, sizeDelta: -3, type: 'fill', time: now + 400,
+      }));
+      // Addition (refill): sizeDecrease = max(0, 4-3) = 1
+      await processDelta(service, 'blofin', 'BTC-USDT', makeDelta({
+        price, sizeDelta: 3, type: 'addition', time: now + 500,
+      }));
+
+      // Final state: tradeVolume = 9, sizeDecrease = 1
+      // ratio = 9 / 1 = 9.0 >= 3 ✓
       expect(emitSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'absorption',

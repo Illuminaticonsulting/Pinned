@@ -21,6 +21,11 @@ const MAX_SEND_BUFFER_BYTES = 1_048_576; // 1 MB
 const HEATMAP_THROTTLE_INTERVAL = 250; // 4/sec
 const TRADES_THROTTLE_INTERVAL = 100; // 10/sec
 const INITIAL_CANDLE_LIMIT = 500;
+const MAX_WS_MESSAGES_PER_SEC = 50;
+const MAX_CHANNELS_PER_CLIENT = 20;
+const ALLOWED_CHANNEL_PREFIXES = ['candles:', 'trades:', 'heatmap:', 'orderbook:', 'signals:', 'bigtrades:', 'patterns:', 'funding:'];
+const ALLOWED_MUTATION_TYPES = ['symbol_change', 'timeframe_change', 'drawing_add', 'drawing_update', 'drawing_remove', 'indicator_toggle', 'viewport_change', 'crosshair_move'];
+const MAX_MUTATION_PAYLOAD_BYTES = 10_000;
 
 // ─── Binary Message Types ────────────────────────────────────────────────────
 
@@ -44,6 +49,7 @@ interface ClientState {
   pendingMessages: Map<string, unknown[]>; // channel -> queued messages
   rooms: Set<string>; // broadcast room IDs
   isBroadcaster: Map<string, boolean>; // roomId -> true if broadcaster
+  messageTimestamps: number[]; // for rate limiting
 }
 
 interface BroadcastRoom {
@@ -199,7 +205,7 @@ export class WebSocketServer {
     }
 
     try {
-      const payload = jwt.verify(token, config.JWT_SECRET) as UserPayload;
+      const payload = jwt.verify(token, config.JWT_SECRET, { algorithms: ['HS256'] }) as UserPayload;
       return payload;
     } catch {
       throw new Error('Invalid or expired token');
@@ -222,6 +228,7 @@ export class WebSocketServer {
       pendingMessages: new Map(),
       rooms: new Set(),
       isBroadcaster: new Map(),
+      messageTimestamps: [],
     };
 
     this.clients.set(clientId, state);
@@ -262,6 +269,15 @@ export class WebSocketServer {
   }
 
   private handleMessage(clientId: string, state: ClientState, raw: WebSocket.RawData): void {
+    // Rate limit: max messages per second per client
+    const now = Date.now();
+    state.messageTimestamps = state.messageTimestamps.filter(t => now - t < 1000);
+    if (state.messageTimestamps.length >= MAX_WS_MESSAGES_PER_SEC) {
+      this.sendJson(state, { type: 'error', data: 'Rate limit exceeded', timestamp: now });
+      return;
+    }
+    state.messageTimestamps.push(now);
+
     let msg: any;
 
     try {
@@ -301,6 +317,19 @@ export class WebSocketServer {
 
     for (const channel of msg.channels) {
       if (state.channels.has(channel)) continue;
+
+      // Validate channel name against allowlist
+      const isValid = ALLOWED_CHANNEL_PREFIXES.some(prefix => channel.startsWith(prefix));
+      if (!isValid) {
+        this.sendJson(state, { type: 'error', data: `Invalid channel: ${channel}`, timestamp: Date.now() });
+        continue;
+      }
+
+      // Enforce max channels per client
+      if (state.channels.size >= MAX_CHANNELS_PER_CLIENT) {
+        this.sendJson(state, { type: 'error', data: 'Maximum channel limit reached', timestamp: Date.now() });
+        return;
+      }
 
       state.channels.add(channel);
 
@@ -629,9 +658,30 @@ export class WebSocketServer {
       return;
     }
 
+    // Validate mutation type against allowlist
+    if (!msg.data?.type || !ALLOWED_MUTATION_TYPES.includes(msg.data.type)) {
+      this.sendJson(state, {
+        type: 'error',
+        data: 'Invalid mutation type',
+        timestamp: Date.now(),
+      });
+      return;
+    }
+
+    // Limit payload size to prevent abuse
+    const payloadStr = JSON.stringify(msg.data?.data ?? null);
+    if (payloadStr.length > MAX_MUTATION_PAYLOAD_BYTES) {
+      this.sendJson(state, {
+        type: 'error',
+        data: 'Mutation payload too large',
+        timestamp: Date.now(),
+      });
+      return;
+    }
+
     const mutation: SyncMutation = {
-      type: msg.data?.type,
-      data: msg.data?.data,
+      type: msg.data.type,
+      data: msg.data.data,
       userId: state.user.userId,
       timestamp: Date.now(),
     };

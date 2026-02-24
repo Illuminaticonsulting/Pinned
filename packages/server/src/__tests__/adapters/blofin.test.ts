@@ -138,10 +138,13 @@ describe('BloFinAdapter', () => {
         .mockResolvedValue(rateLimitResponse());
 
       const promise = adapter.getHistoricalCandles('BTC-USDT', '1m');
-      // Advance through all retry delays (500, 1000, 2000 ms)
-      await jest.advanceTimersByTimeAsync(5000);
-
-      await expect(promise).rejects.toThrow();
+      // Attach rejection handler immediately to avoid unhandled rejection
+      const assertion = expect(promise).rejects.toThrow();
+      // Advance through all retry delays in steps to process recursive timers
+      for (let i = 0; i < 10; i++) {
+        await jest.advanceTimersByTimeAsync(1000);
+      }
+      await assertion;
     });
   });
 

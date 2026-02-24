@@ -200,6 +200,10 @@ export class HeatmapPanel {
     this.renderer?.resize();
   }
 
+  resize(): void {
+    this.renderer?.resize();
+  }
+
   destroy(): void {
     this.renderer?.destroy();
     this.renderer = null;

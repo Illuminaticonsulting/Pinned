@@ -172,7 +172,8 @@ router.post('/configs', async (req: Request, res: Response) => {
     }
 
     const id = uuidv4();
-    const name = (req.body.name as string) || `${parsed.data.symbol} ${parsed.data.timeframe}`;
+    const rawName = typeof req.body.name === 'string' ? req.body.name.trim().slice(0, 100) : '';
+    const name = rawName || `${parsed.data.symbol} ${parsed.data.timeframe}`;
     const serialised = JSON.stringify(parsed.data);
 
     await pool.query(

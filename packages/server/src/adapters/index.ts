@@ -3,7 +3,7 @@ import { ExchangeAdapter } from './types';
 import { BloFinAdapter } from './blofin';
 import { MexcAdapter } from './mexc';
 
-export { ExchangeAdapter, ExchangeAdapterEvents } from './types';
+export type { ExchangeAdapter, ExchangeAdapterEvents } from './types';
 export { BloFinAdapter } from './blofin';
 export { MexcAdapter } from './mexc';
 

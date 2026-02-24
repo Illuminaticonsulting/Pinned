@@ -38,18 +38,31 @@ const app = express();
 
 app.set('trust proxy', 1);
 
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "blob:"],
+      connectSrc: ["'self'", "ws:", "wss:"],
+      fontSrc: ["'self'", "data:"],
+      objectSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+    },
+  },
+}));
 app.use(cors({
   origin: config.NODE_ENV === 'production'
     ? ['https://pinned.trade'] // Replace with actual domain
-    : true,
+    : ['http://localhost:3000', 'http://localhost:5173'],
   credentials: true,
 }));
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 app.use(apiRateLimiter);
 
-// Health check (not behind rate limiter)
+// Health check (not behind rate limiter) - minimal info for public
 app.get('/health', async (_req, res) => {
   try {
     const dbOk = await pool.query('SELECT 1 AS ok').then((r) => r.rows[0]?.ok === 1).catch(() => false);
@@ -58,9 +71,6 @@ app.get('/health', async (_req, res) => {
     const healthy = dbOk && redisOk;
     res.status(healthy ? 200 : 503).json({
       status: healthy ? 'ok' : 'degraded',
-      db: dbOk ? 'connected' : 'disconnected',
-      redis: redisOk ? 'connected' : 'disconnected',
-      uptime: process.uptime(),
     });
   } catch {
     res.status(503).json({ status: 'error' });

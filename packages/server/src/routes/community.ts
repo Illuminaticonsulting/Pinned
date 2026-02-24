@@ -93,7 +93,7 @@ router.delete('/broadcast/:roomId', verifyToken, async (req: Request, res: Respo
     );
 
     // Remove from user's active rooms
-    await redis.srem(`broadcast:user:${userId}`, roomId);
+    await redis.srem(`broadcast:user:${userId}`, String(roomId));
 
     // Clean up viewer set
     await redis.del(`broadcast:viewers:${roomId}`);

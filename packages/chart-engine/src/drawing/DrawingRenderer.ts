@@ -10,12 +10,13 @@ import type { Viewport } from '../core/Viewport';
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
-const HANDLE_RADIUS = 4;
+const HANDLE_RADIUS = 5;
 const HANDLE_FILL = '#ffffff';
-const HANDLE_STROKE = '#2196F3';
+const HANDLE_STROKE = '#6366f1';
+const HANDLE_GLOW = 'rgba(99, 102, 241, 0.4)';
 const LABEL_FONT = '11px "Inter", sans-serif';
-const LABEL_PAD_X = 4;
-const LABEL_PAD_Y = 2;
+const LABEL_PAD_X = 6;
+const LABEL_PAD_Y = 3;
 
 const FIB_COLORS = [
   'rgba(244, 67, 54, 0.08)',
@@ -51,12 +52,19 @@ function drawHandle(
   x: number,
   y: number,
 ): void {
+  // Outer glow
+  ctx.beginPath();
+  ctx.arc(x, y, HANDLE_RADIUS + 3, 0, Math.PI * 2);
+  ctx.fillStyle = HANDLE_GLOW;
+  ctx.fill();
+
+  // White fill circle
   ctx.beginPath();
   ctx.arc(x, y, HANDLE_RADIUS, 0, Math.PI * 2);
   ctx.fillStyle = HANDLE_FILL;
   ctx.fill();
   ctx.strokeStyle = HANDLE_STROKE;
-  ctx.lineWidth = 1.5;
+  ctx.lineWidth = 2;
   ctx.stroke();
 }
 

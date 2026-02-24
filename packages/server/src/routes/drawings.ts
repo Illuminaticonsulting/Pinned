@@ -61,7 +61,7 @@ router.get('/', async (req: Request, res: Response) => {
       params.push(timeframe);
     }
 
-    query += ` ORDER BY updated_at DESC`;
+    query += ` ORDER BY updated_at DESC LIMIT 500`;
 
     const result = await pool.query(query, params);
 

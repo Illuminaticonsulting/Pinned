@@ -256,7 +256,10 @@ export class PatternDetectionService {
       tracker.tradeVolumeAtLevel += Math.abs(delta.sizeDelta);
     }
 
-    if (delta.sizeDelta < 0) {
+    // Track net size decrease: fills/cancels increase, additions decrease
+    if (delta.type === 'addition' && delta.sizeDelta > 0) {
+      tracker.sizeDecrease = Math.max(0, tracker.sizeDecrease - delta.sizeDelta);
+    } else if (delta.sizeDelta < 0) {
       tracker.sizeDecrease += Math.abs(delta.sizeDelta);
     }
 
