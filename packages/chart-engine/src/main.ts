@@ -13,6 +13,16 @@ import { LiveOrderFlowService } from './services/LiveOrderFlowService';
 import { HeatmapPanel } from './heatmap/HeatmapPanel';
 import { OrderFlowSidebar } from './ui/OrderFlowSidebar';
 
+// ─── New Feature Imports ─────────────────────────────────────────────────────
+import { CommandPalette, type CommandAction } from './ui/CommandPalette';
+import { ReplayMode } from './ui/ReplayMode';
+import { TradeJournal } from './ui/TradeJournal';
+import { AIChartAnalyst } from './ui/AIChartAnalyst';
+import { AdaptiveLayoutMemory } from './ui/AdaptiveLayoutMemory';
+import { HotkeyMacros, type MacroAction } from './ui/HotkeyMacros';
+import { IndicatorConflictDetector } from './ui/IndicatorConflictDetector';
+import { SessionStatsDashboard } from './ui/SessionStatsDashboard';
+
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h', '1d'];
@@ -45,11 +55,67 @@ class PinnedApp {
   private showFootprint = false;
   private showPatterns = true;
 
+  // ── New Feature Components ───────────────────────────────────────────
+  private commandPalette: CommandPalette;
+  private replayMode: ReplayMode | null = null;
+  private tradeJournal: TradeJournal;
+  private aiAnalyst: AIChartAnalyst | null = null;
+  private adaptiveLayout: AdaptiveLayoutMemory;
+  private hotkeyMacros: HotkeyMacros;
+  private conflictDetector: IndicatorConflictDetector;
+  private sessionStats: SessionStatsDashboard;
+
   constructor(rootEl: HTMLElement) {
     this.root = rootEl;
     this.symbolService = SymbolService.getInstance();
     this.syncControls = new SyncControls();
     this.liveService = LiveOrderFlowService.getInstance();
+
+    // ── Init new feature components ─────────────────────────────────────
+    this.commandPalette = new CommandPalette();
+
+    this.tradeJournal = new TradeJournal({
+      onGetChartSnapshot: async () => {
+        // Capture active pane as data URL
+        const pane = this.getActivePane();
+        if (!pane) return '';
+        const paneEl = this.root.querySelector(`.chart-pane[data-pane-id="${this.activePaneId}"]`) as HTMLElement;
+        if (!paneEl) return '';
+        const canvas = paneEl.querySelector('canvas');
+        return canvas?.toDataURL('image/png') ?? '';
+      },
+      getCurrentPrice: () => {
+        const pane = this.getActivePane();
+        if (!pane) return 0;
+        const candles = pane.state.getState().candles;
+        return candles.length > 0 ? candles[candles.length - 1].close : 0;
+      },
+      getCurrentSymbol: () => this.activeSymbol,
+      getCurrentTimeframe: () => this.activeTimeframe,
+    });
+
+    this.adaptiveLayout = new AdaptiveLayoutMemory({
+      onSuggestHide: (panelId, label, days) => {
+        this.showToast(`💡 "${label}" hasn't been used in ${days} days. Consider hiding it.`, 5000);
+      },
+      onAutoHide: (panelId) => {
+        // Auto-hide the panel
+        if (panelId === 'heatmap' && this.showHeatmap) this.toggleHeatmap();
+        if (panelId === 'orderbook' && this.showOrderbook) this.toggleOrderbook();
+        if (panelId === 'volumeProfile' && this.showVolumeProfile) this.toggleVolumeProfile();
+        if (panelId === 'footprint' && this.showFootprint) this.toggleFootprint();
+      },
+    });
+
+    this.hotkeyMacros = new HotkeyMacros((action: MacroAction) => {
+      this.executeMacroAction(action);
+    });
+
+    this.conflictDetector = new IndicatorConflictDetector((warnings) => {
+      // Warnings are auto-displayed via toast notifications in the detector
+    });
+
+    this.sessionStats = new SessionStatsDashboard();
   }
 
   // ── Bootstrap ────────────────────────────────────────────────────────────
@@ -68,8 +134,11 @@ class PinnedApp {
     this.createPropertiesPanel();
     this.createHeatmapPanel();
     this.createOrderFlowSidebar();
+    this.createReplayBar();
     this.bindKeyboardShortcuts();
     this.connectLiveOrderFlow();
+    this.registerAdaptivePanels();
+    this.registerCommandPaletteActions();
 
     // Init symbol service (fetches all BloFin instruments)
     await this.symbolService.init();
@@ -218,6 +287,9 @@ class PinnedApp {
           <!-- Properties Panel Mount -->
           <div id="propertiesPanelMount" class="properties-mount"></div>
         </div>
+
+        <!-- Replay Bar (bottom, toggleable) -->
+        <div id="replayBarMount" class="replay-bar-mount" style="display:none"></div>
       </div>
 
       <!-- Toast Container -->
@@ -449,8 +521,15 @@ class PinnedApp {
 
       const key = e.key.toUpperCase();
 
-      // Ctrl+K or / = open symbol search
-      if (key === '/' || ((e.ctrlKey || e.metaKey) && key === 'K')) {
+      // ⌘K = open Command Palette (override old symbol search)
+      if ((e.ctrlKey || e.metaKey) && key === 'K') {
+        e.preventDefault();
+        this.commandPalette.toggle();
+        return;
+      }
+
+      // / = open symbol search (keep original behavior)
+      if (key === '/') {
         e.preventDefault();
         this.openSymbolSearch();
         return;
@@ -467,6 +546,42 @@ class PinnedApp {
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && key === 'P') {
         e.preventDefault();
         this.takeScreenshot();
+        return;
+      }
+
+      // J = open trade journal entry
+      if (key === 'J') {
+        e.preventDefault();
+        this.tradeJournal.openNewEntry();
+        this.sessionStats.recordEvent({ type: 'draw_tool', detail: 'journal', timestamp: Date.now() });
+        return;
+      }
+
+      // Shift+J = open journal dashboard
+      if (e.shiftKey && key === 'J') {
+        e.preventDefault();
+        this.tradeJournal.openDashboard();
+        return;
+      }
+
+      // R = toggle replay mode
+      if (key === 'R') {
+        e.preventDefault();
+        this.toggleReplayMode();
+        return;
+      }
+
+      // Shift+S = session stats
+      if (e.shiftKey && key === 'S') {
+        e.preventDefault();
+        this.sessionStats.openDashboard();
+        return;
+      }
+
+      // Shift+M = macro editor
+      if (e.shiftKey && key === 'M') {
+        e.preventDefault();
+        this.hotkeyMacros.openEditor();
         return;
       }
 
@@ -510,6 +625,7 @@ class PinnedApp {
         if (pane) {
           pane.setDrawingTool(toolId);
           if (this.toolbar) this.toolbar.setActiveTool(toolId);
+          this.sessionStats.recordEvent({ type: 'draw_tool', detail: toolId, timestamp: Date.now() });
         }
         return;
       }
@@ -674,10 +790,12 @@ class PinnedApp {
       if (mount) mount.style.display = 'block';
       this.heatmapPanel?.show();
       btn?.classList.add('active');
+      this.adaptiveLayout.recordActivation('heatmap');
     } else {
       this.heatmapPanel?.hide();
       if (mount) mount.style.display = 'none';
       btn?.classList.remove('active');
+      this.adaptiveLayout.recordDeactivation('heatmap');
     }
   }
 
@@ -690,10 +808,12 @@ class PinnedApp {
       mount?.classList.add('visible');
       this.orderFlowSidebar?.show();
       btn?.classList.add('active');
+      this.adaptiveLayout.recordActivation('orderbook');
     } else {
       this.orderFlowSidebar?.hide();
       mount?.classList.remove('visible');
       btn?.classList.remove('active');
+      this.adaptiveLayout.recordDeactivation('orderbook');
     }
   }
 
@@ -705,6 +825,9 @@ class PinnedApp {
     for (const pane of this.panes.values()) {
       pane.setVolumeProfile(this.showVolumeProfile);
     }
+
+    if (this.showVolumeProfile) this.adaptiveLayout.recordActivation('volumeProfile');
+    else this.adaptiveLayout.recordDeactivation('volumeProfile');
   }
 
   private toggleFootprint(): void {
@@ -715,6 +838,9 @@ class PinnedApp {
     for (const pane of this.panes.values()) {
       pane.setFootprint(this.showFootprint);
     }
+
+    if (this.showFootprint) this.adaptiveLayout.recordActivation('footprint');
+    else this.adaptiveLayout.recordDeactivation('footprint');
   }
 
   private togglePatterns(): void {
@@ -725,6 +851,9 @@ class PinnedApp {
     for (const pane of this.panes.values()) {
       pane.setAnnotations(this.showPatterns);
     }
+
+    if (this.showPatterns) this.adaptiveLayout.recordActivation('patterns');
+    else this.adaptiveLayout.recordDeactivation('patterns');
   }
 
   // ── Symbol change: update live service ─────────────────────────────────
@@ -736,6 +865,345 @@ class PinnedApp {
     for (const pane of this.panes.values()) {
       pane.clearPatternEvents();
     }
+
+    // Track in session stats
+    this.sessionStats.recordEvent({
+      type: 'view_symbol',
+      symbol: this.activeSymbol,
+      timestamp: Date.now(),
+    });
+  }
+
+  // ── Replay Mode ──────────────────────────────────────────────────────
+
+  private createReplayBar(): void {
+    const mount = this.root.querySelector<HTMLElement>('#replayBarMount');
+    if (!mount) return;
+
+    this.replayMode = new ReplayMode({
+      onRevealCandle: (candles) => {
+        const pane = this.getActivePane();
+        if (pane) {
+          pane.state.setState({ candles });
+        }
+      },
+      onStateChange: (_state) => {
+        // Could update UI indicators here
+      },
+      fetchCandles: async (startTs, endTs) => {
+        const pane = this.getActivePane();
+        if (!pane) return [];
+        // Fetch via DataService
+        try {
+          const resp = await fetch(
+            `/blofin-api/api/v1/market/candles?instId=${this.activeSymbol}&bar=${this.activeTimeframe}&begin=${startTs}&end=${endTs}&limit=300`,
+          );
+          const json = await resp.json();
+          if (json.data) {
+            return json.data.map((d: string[]) => ({
+              timestamp: parseInt(d[0]),
+              open: parseFloat(d[1]),
+              high: parseFloat(d[2]),
+              low: parseFloat(d[3]),
+              close: parseFloat(d[4]),
+              volume: parseFloat(d[5]),
+            }));
+          }
+        } catch { /* ignore */ }
+        return [];
+      },
+    });
+
+    this.replayMode.mount(mount);
+  }
+
+  private toggleReplayMode(): void {
+    const mount = this.root.querySelector<HTMLElement>('#replayBarMount');
+    if (!mount || !this.replayMode) return;
+
+    if (this.replayMode.isActive()) {
+      this.replayMode.stop();
+      mount.style.display = 'none';
+    } else {
+      mount.style.display = 'block';
+      this.replayMode.show();
+      this.showToast('Replay Mode — Set date range and press Play');
+    }
+  }
+
+  // ── Adaptive Layout Panels ────────────────────────────────────────────
+
+  private registerAdaptivePanels(): void {
+    this.adaptiveLayout.registerPanel('heatmap', 'Heatmap');
+    this.adaptiveLayout.registerPanel('orderbook', 'DOM / OrderBook');
+    this.adaptiveLayout.registerPanel('volumeProfile', 'Volume Profile');
+    this.adaptiveLayout.registerPanel('footprint', 'Footprint');
+    this.adaptiveLayout.registerPanel('patterns', 'Pattern Detection');
+    this.adaptiveLayout.startMonitoring();
+  }
+
+  // ── Macro Executor ─────────────────────────────────────────────────────
+
+  private executeMacroAction(action: MacroAction): void {
+    switch (action.type) {
+      case 'set_tool': {
+        const pane = this.getActivePane();
+        if (pane) {
+          pane.setDrawingTool(action.tool);
+          if (this.toolbar) this.toolbar.setActiveTool(action.tool);
+        }
+        break;
+      }
+      case 'toggle_panel': {
+        if (action.panel === 'heatmap' && this.showHeatmap !== action.enabled) this.toggleHeatmap();
+        if (action.panel === 'orderbook' && this.showOrderbook !== action.enabled) this.toggleOrderbook();
+        if (action.panel === 'volumeProfile' && this.showVolumeProfile !== action.enabled) this.toggleVolumeProfile();
+        if (action.panel === 'footprint' && this.showFootprint !== action.enabled) this.toggleFootprint();
+        if (action.panel === 'patterns' && this.showPatterns !== action.enabled) this.togglePatterns();
+        break;
+      }
+      case 'set_timeframe': {
+        this.activeTimeframe = action.timeframe;
+        const pane = this.getActivePane();
+        if (pane) pane.setTimeframe(action.timeframe);
+        this.updateTopBarSelections();
+        break;
+      }
+      case 'set_symbol': {
+        this.handleSymbolChange(action.symbol);
+        break;
+      }
+      case 'add_indicator': {
+        this.showToast(`Added ${action.indicator}${action.params?.period ? ` (${action.params.period})` : ''}`);
+        this.conflictDetector.addIndicator({
+          id: action.indicator,
+          name: action.indicator.toUpperCase(),
+          params: action.params as Record<string, number | string> | undefined,
+        });
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  // ── Command Palette Actions ────────────────────────────────────────────
+
+  private registerCommandPaletteActions(): void {
+    const actions: CommandAction[] = [
+      // ── Navigation ─────────────────────────────────────────────────
+      {
+        id: 'nav:symbol_search',
+        label: 'Search Symbol',
+        description: 'Open symbol search to change trading pair',
+        category: 'navigation',
+        icon: '🔍',
+        shortcut: '/',
+        keywords: ['symbol', 'search', 'pair', 'instrument', 'ticker'],
+        execute: () => this.openSymbolSearch(),
+      },
+      ...TIMEFRAMES.map((tf) => ({
+        id: `nav:timeframe_${tf}`,
+        label: `Set Timeframe: ${tf}`,
+        description: `Switch to ${tf} timeframe`,
+        category: 'navigation' as const,
+        icon: '⏱',
+        keywords: ['timeframe', 'tf', 'interval', tf],
+        execute: () => {
+          this.activeTimeframe = tf;
+          const pane = this.getActivePane();
+          if (pane) pane.setTimeframe(tf);
+          this.updateTopBarSelections();
+          this.sessionStats.recordEvent({ type: 'change_timeframe', timeframe: tf, timestamp: Date.now() });
+        },
+      })),
+
+      // ── OrderFlow ──────────────────────────────────────────────────
+      {
+        id: 'of:heatmap',
+        label: 'Toggle Heatmap',
+        description: 'Show/hide the volume heatmap panel',
+        category: 'orderflow',
+        icon: '🟥',
+        keywords: ['heatmap', 'heat', 'volbook'],
+        execute: () => {
+          this.toggleHeatmap();
+          this.adaptiveLayout.recordActivation('heatmap');
+        },
+      },
+      {
+        id: 'of:orderbook',
+        label: 'Toggle DOM/OrderBook',
+        description: 'Show/hide the orderbook & trades sidebar',
+        category: 'orderflow',
+        icon: '📊',
+        keywords: ['dom', 'orderbook', 'order', 'book', 'depth'],
+        execute: () => {
+          this.toggleOrderbook();
+          this.adaptiveLayout.recordActivation('orderbook');
+        },
+      },
+      {
+        id: 'of:volume_profile',
+        label: 'Toggle Volume Profile',
+        description: 'Show/hide volume profile on chart',
+        category: 'orderflow',
+        icon: '📈',
+        shortcut: 'VP',
+        keywords: ['volume', 'profile', 'vp', 'poc', 'value area'],
+        execute: () => {
+          this.toggleVolumeProfile();
+          this.adaptiveLayout.recordActivation('volumeProfile');
+        },
+      },
+      {
+        id: 'of:footprint',
+        label: 'Toggle Footprint',
+        description: 'Show/hide footprint (cluster) candles',
+        category: 'orderflow',
+        icon: '🕯',
+        shortcut: 'FP',
+        keywords: ['footprint', 'fp', 'cluster', 'orderflow'],
+        execute: () => {
+          this.toggleFootprint();
+          this.adaptiveLayout.recordActivation('footprint');
+        },
+      },
+      {
+        id: 'of:patterns',
+        label: 'Toggle Pattern Detection',
+        description: 'Show/hide iceberg/spoof/absorption detection',
+        category: 'orderflow',
+        icon: '🎯',
+        keywords: ['pattern', 'detect', 'iceberg', 'spoof', 'absorption'],
+        execute: () => {
+          this.togglePatterns();
+          this.adaptiveLayout.recordActivation('patterns');
+        },
+      },
+
+      // ── Drawing Tools ──────────────────────────────────────────────
+      ...[
+        { id: 'trendline', label: 'Trend Line', shortcut: 'T', icon: '📏' },
+        { id: 'horizontal', label: 'Horizontal Line', shortcut: 'H', icon: '➖' },
+        { id: 'vertical', label: 'Vertical Line', shortcut: 'V', icon: '|' },
+        { id: 'ray', label: 'Ray', shortcut: 'R', icon: '↗' },
+        { id: 'rectangle', label: 'Rectangle', icon: '▭' },
+        { id: 'fibRetracement', label: 'Fibonacci Retracement', shortcut: 'F', icon: '🌀' },
+        { id: 'fibExtension', label: 'Fibonacci Extension', icon: '🌀' },
+        { id: 'pitchfork', label: 'Pitchfork', icon: '🔱' },
+      ].map((tool) => ({
+        id: `draw:${tool.id}`,
+        label: `Draw: ${tool.label}`,
+        description: `Select the ${tool.label.toLowerCase()} drawing tool`,
+        category: 'drawing' as const,
+        icon: tool.icon,
+        shortcut: tool.shortcut,
+        keywords: ['draw', 'drawing', 'tool', tool.label.toLowerCase()],
+        execute: () => {
+          const pane = this.getActivePane();
+          if (pane) {
+            pane.setDrawingTool(tool.id);
+            if (this.toolbar) this.toolbar.setActiveTool(tool.id);
+          }
+        },
+      })),
+
+      // ── Layout ─────────────────────────────────────────────────────
+      ...(['1', '2h', '2v', '3L', '4'] as LayoutMode[]).map((mode) => ({
+        id: `layout:${mode}`,
+        label: `Layout: ${layoutLabel(mode)}`,
+        description: `Switch to ${layoutLabel(mode)} chart layout`,
+        category: 'layout' as const,
+        icon: '⊞',
+        keywords: ['layout', 'grid', 'pane', 'split', mode],
+        execute: () => {
+          this.layout?.setLayout(mode);
+        },
+      })),
+
+      // ── Replay ─────────────────────────────────────────────────────
+      {
+        id: 'replay:toggle',
+        label: 'Toggle Replay Mode',
+        description: 'Start/stop historical bar-by-bar replay',
+        category: 'replay',
+        icon: '⏪',
+        shortcut: 'R',
+        keywords: ['replay', 'playback', 'rewind', 'practice', 'historical'],
+        execute: () => this.toggleReplayMode(),
+      },
+
+      // ── Journal ────────────────────────────────────────────────────
+      {
+        id: 'journal:new',
+        label: 'New Journal Entry',
+        description: 'Log a new trade in your journal',
+        category: 'journal',
+        icon: '📝',
+        shortcut: 'J',
+        keywords: ['journal', 'trade', 'log', 'entry', 'note'],
+        execute: () => this.tradeJournal.openNewEntry(),
+      },
+      {
+        id: 'journal:dashboard',
+        label: 'Journal Dashboard',
+        description: 'View trade journal stats and history',
+        category: 'journal',
+        icon: '📊',
+        shortcut: '⇧J',
+        keywords: ['journal', 'dashboard', 'stats', 'history', 'performance'],
+        execute: () => this.tradeJournal.openDashboard(),
+      },
+
+      // ── Session Stats ──────────────────────────────────────────────
+      {
+        id: 'stats:dashboard',
+        label: 'Session Statistics',
+        description: 'View session stats, heatmap calendar, symbol time',
+        category: 'settings',
+        icon: '📊',
+        shortcut: '⇧S',
+        keywords: ['session', 'stats', 'statistics', 'calendar', 'heatmap', 'activity'],
+        execute: () => this.sessionStats.openDashboard(),
+      },
+
+      // ── Macros ─────────────────────────────────────────────────────
+      {
+        id: 'macros:editor',
+        label: 'Hotkey Macros',
+        description: 'Create/edit keyboard macro sequences',
+        category: 'settings',
+        icon: '⌨️',
+        shortcut: '⇧M',
+        keywords: ['macro', 'hotkey', 'shortcut', 'sequence', 'script'],
+        execute: () => this.hotkeyMacros.openEditor(),
+      },
+
+      // ── Share ──────────────────────────────────────────────────────
+      {
+        id: 'share:dialog',
+        label: 'Share Chart',
+        description: 'Share current chart as link or image',
+        category: 'settings',
+        icon: '🔗',
+        shortcut: '⌘⇧S',
+        keywords: ['share', 'link', 'export'],
+        execute: () => this.openShareDialog(),
+      },
+      {
+        id: 'share:screenshot',
+        label: 'Take Screenshot',
+        description: 'Copy chart screenshot to clipboard',
+        category: 'settings',
+        icon: '📸',
+        shortcut: '⌘⇧P',
+        keywords: ['screenshot', 'capture', 'image', 'copy', 'clipboard'],
+        execute: () => this.takeScreenshot(),
+      },
+    ];
+
+    this.commandPalette.registerActions(actions);
   }
 
   destroy() {
@@ -748,6 +1216,28 @@ class PinnedApp {
     for (const pane of this.panes.values()) pane.destroy();
     this.panes.clear();
     this.symbolService.destroy();
+
+    // Cleanup new features
+    this.hotkeyMacros.destroy();
+    this.conflictDetector.destroy();
+    this.sessionStats.endSession();
+    this.adaptiveLayout.stopMonitoring();
+  }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function layoutLabel(mode: LayoutMode): string {
+  switch (mode) {
+    case '1': return 'Single';
+    case '2h': return '2 Horizontal';
+    case '2v': return '2 Vertical';
+    case '3L': return '1 Left + 2 Right';
+    case '3R': return '2 Left + 1 Right';
+    case '3T': return '1 Top + 2 Bottom';
+    case '3B': return '2 Top + 1 Bottom';
+    case '4': return '2×2 Grid';
+    default: return mode;
   }
 }
 
