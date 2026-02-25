@@ -1,12 +1,12 @@
 /**
  * IndicatorRenderer.ts
- * Renders overlay indicators (VWAP, Anchored VWAP) on the main chart and
- * sub-plot indicators (Cumulative Delta, OFI, Funding Rate) in stacked
- * panels below the main chart on Layer 2.
+ * Renders overlay indicators (EMA, SMA, Bollinger Bands, VWAP, Anchored VWAP)
+ * on the main chart and sub-plot indicators (RSI, MACD, Cumulative Delta, OFI,
+ * Funding Rate) in stacked panels below the main chart on Layer 2.
  */
 
 import type { Viewport } from '../core/Viewport';
-import type { ChartStateData } from '../core/ChartState';
+import type { ChartStateData, Candle } from '../core/ChartState';
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
@@ -29,6 +29,105 @@ const BULL_COLOR = '#22c55e';
 const BEAR_COLOR = '#ef4444';
 const ZERO_LINE_COLOR = 'rgba(100, 116, 139, 0.3)';
 const EMA_COLOR = '#facc15';
+
+// Classic indicator colors
+const EMA_COLORS = ['#f59e0b', '#3b82f6', '#8b5cf6', '#ec4899']; // EMA 9, 21, 50, 200
+const SMA_COLORS = ['#06b6d4', '#10b981', '#6366f1', '#f43f5e']; // SMA 20, 50, 100, 200
+const BB_COLOR = '#8b5cf6';
+const BB_FILL = 'rgba(139, 92, 246, 0.06)';
+const RSI_COLOR = '#f59e0b';
+const RSI_OVERBOUGHT = 70;
+const RSI_OVERSOLD = 30;
+const MACD_LINE_COLOR = '#3b82f6';
+const MACD_SIGNAL_COLOR = '#ef4444';
+const MACD_HIST_BULL = 'rgba(34, 197, 94, 0.6)';
+const MACD_HIST_BEAR = 'rgba(239, 68, 68, 0.6)';
+
+// ─── Classic Indicator Calculations ──────────────────────────────────────────
+
+function computeEMA(values: number[], period: number): number[] {
+  const result: number[] = [];
+  if (values.length === 0) return result;
+  const k = 2 / (period + 1);
+  let ema = values[0]!;
+  result.push(ema);
+  for (let i = 1; i < values.length; i++) {
+    ema = values[i]! * k + ema * (1 - k);
+    result.push(ema);
+  }
+  return result;
+}
+
+function computeSMA(values: number[], period: number): number[] {
+  const result: number[] = new Array(values.length).fill(NaN);
+  if (values.length < period) return result;
+  let sum = 0;
+  for (let i = 0; i < period; i++) sum += values[i]!;
+  result[period - 1] = sum / period;
+  for (let i = period; i < values.length; i++) {
+    sum += values[i]! - values[i - period]!;
+    result[i] = sum / period;
+  }
+  return result;
+}
+
+function computeBollingerBands(values: number[], period: number, stdDev: number): { upper: number[]; middle: number[]; lower: number[] } {
+  const middle = computeSMA(values, period);
+  const upper: number[] = new Array(values.length).fill(NaN);
+  const lower: number[] = new Array(values.length).fill(NaN);
+
+  for (let i = period - 1; i < values.length; i++) {
+    let sum = 0;
+    for (let j = i - period + 1; j <= i; j++) {
+      const diff = values[j]! - middle[i]!;
+      sum += diff * diff;
+    }
+    const std = Math.sqrt(sum / period);
+    upper[i] = middle[i]! + stdDev * std;
+    lower[i] = middle[i]! - stdDev * std;
+  }
+
+  return { upper, middle, lower };
+}
+
+function computeRSI(values: number[], period = 14): number[] {
+  const result: number[] = new Array(values.length).fill(NaN);
+  if (values.length < period + 1) return result;
+
+  let gainSum = 0, lossSum = 0;
+  for (let i = 1; i <= period; i++) {
+    const change = values[i]! - values[i - 1]!;
+    if (change > 0) gainSum += change; else lossSum += Math.abs(change);
+  }
+  let avgGain = gainSum / period;
+  let avgLoss = lossSum / period;
+  result[period] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+
+  for (let i = period + 1; i < values.length; i++) {
+    const change = values[i]! - values[i - 1]!;
+    avgGain = (avgGain * (period - 1) + Math.max(change, 0)) / period;
+    avgLoss = (avgLoss * (period - 1) + Math.max(-change, 0)) / period;
+    result[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  }
+  return result;
+}
+
+function computeMACD(values: number[], fast = 12, slow = 26, signal = 9): { macd: number[]; signal: number[]; histogram: number[] } {
+  const emaFast = computeEMA(values, fast);
+  const emaSlow = computeEMA(values, slow);
+
+  const macdLine: number[] = [];
+  for (let i = 0; i < values.length; i++) {
+    macdLine.push(emaFast[i]! - emaSlow[i]!);
+  }
+  const signalLine = computeEMA(macdLine, signal);
+  const histogram: number[] = [];
+  for (let i = 0; i < values.length; i++) {
+    histogram.push(macdLine[i]! - signalLine[i]!);
+  }
+
+  return { macd: macdLine, signal: signalLine, histogram };
+}
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -145,8 +244,13 @@ export function renderIndicators(
   const indicators = state.indicators;
   const candles = state.candles;
 
+  // Extract close prices for indicator computation
+  const closes: number[] = candles.map(c => c.close);
+
   // Determine which subplots are active
   const subplotKeys: string[] = [];
+  if (indicators.get('rsi')) subplotKeys.push('RSI');
+  if (indicators.get('macd')) subplotKeys.push('MACD');
   if (indicators.get('cumulativeDelta')) subplotKeys.push('Cum. Delta');
   if (indicators.get('ofi')) subplotKeys.push('OFI');
   if (indicators.get('fundingRate')) subplotKeys.push('Funding Rate');
@@ -236,6 +340,113 @@ export function renderIndicators(
           ctx.fillText(formatPrice(lastVal), last.x + 6, last.y);
         }
       }
+    }
+  }
+
+  ctx.setLineDash([]);
+
+  // ── EMA overlays ──────────────────────────────────────────────────────────
+  const emaPeriods = [9, 21, 50, 200];
+  for (let ei = 0; ei < emaPeriods.length; ei++) {
+    const period = emaPeriods[ei]!;
+    const key = `ema${period}`;
+    if (!indicators.get(key)) continue;
+    const emaVals = computeEMA(closes, period);
+    const points: { x: number; y: number }[] = [];
+    for (let i = period; i < candles.length; i++) {
+      const c = candles[i]!;
+      if (c.timestamp < startTime || c.timestamp > endTime) continue;
+      const x = viewport.timeToX(c.timestamp);
+      const y = viewport.priceToY(emaVals[i]!);
+      if (y >= 0 && y <= mainBottom) points.push({ x, y });
+    }
+    if (points.length > 1) {
+      ctx.strokeStyle = EMA_COLORS[ei] ?? '#f59e0b';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([]);
+      drawPolyline(ctx, points);
+      const last = points[points.length - 1]!;
+      ctx.font = OVERLAY_LABEL_FONT;
+      ctx.fillStyle = EMA_COLORS[ei] ?? '#f59e0b';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`EMA ${period}`, last.x + 6, last.y);
+    }
+  }
+
+  // ── SMA overlays ──────────────────────────────────────────────────────────
+  const smaPeriods = [20, 50, 100, 200];
+  for (let si = 0; si < smaPeriods.length; si++) {
+    const period = smaPeriods[si]!;
+    const key = `sma${period}`;
+    if (!indicators.get(key)) continue;
+    const smaVals = computeSMA(closes, period);
+    const points: { x: number; y: number }[] = [];
+    for (let i = period - 1; i < candles.length; i++) {
+      const c = candles[i]!;
+      if (c.timestamp < startTime || c.timestamp > endTime) continue;
+      const val = smaVals[i];
+      if (val === undefined || isNaN(val)) continue;
+      const x = viewport.timeToX(c.timestamp);
+      const y = viewport.priceToY(val);
+      if (y >= 0 && y <= mainBottom) points.push({ x, y });
+    }
+    if (points.length > 1) {
+      ctx.strokeStyle = SMA_COLORS[si] ?? '#06b6d4';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([]);
+      drawPolyline(ctx, points);
+      const last = points[points.length - 1]!;
+      ctx.font = OVERLAY_LABEL_FONT;
+      ctx.fillStyle = SMA_COLORS[si] ?? '#06b6d4';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`SMA ${period}`, last.x + 6, last.y);
+    }
+  }
+
+  // ── Bollinger Bands overlay ───────────────────────────────────────────────
+  if (indicators.get('bollingerBands')) {
+    const bb = computeBollingerBands(closes, 20, 2);
+    const upperPts: { x: number; y: number }[] = [];
+    const middlePts: { x: number; y: number }[] = [];
+    const lowerPts: { x: number; y: number }[] = [];
+    for (let i = 19; i < candles.length; i++) {
+      const c = candles[i]!;
+      if (c.timestamp < startTime || c.timestamp > endTime) continue;
+      const u = bb.upper[i], m = bb.middle[i], l = bb.lower[i];
+      if (u === undefined || isNaN(u)) continue;
+      const x = viewport.timeToX(c.timestamp);
+      upperPts.push({ x, y: viewport.priceToY(u!) });
+      middlePts.push({ x, y: viewport.priceToY(m!) });
+      lowerPts.push({ x, y: viewport.priceToY(l!) });
+    }
+    if (upperPts.length > 1) {
+      // Fill between bands
+      ctx.beginPath();
+      ctx.moveTo(upperPts[0]!.x, upperPts[0]!.y);
+      for (const p of upperPts) ctx.lineTo(p.x, p.y);
+      for (let i = lowerPts.length - 1; i >= 0; i--) ctx.lineTo(lowerPts[i]!.x, lowerPts[i]!.y);
+      ctx.closePath();
+      ctx.fillStyle = BB_FILL;
+      ctx.fill();
+      // Upper band
+      ctx.strokeStyle = BB_COLOR;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 2]);
+      drawPolyline(ctx, upperPts);
+      // Lower band
+      drawPolyline(ctx, lowerPts);
+      // Middle band (SMA 20)
+      ctx.setLineDash([]);
+      ctx.lineWidth = 1.5;
+      drawPolyline(ctx, middlePts);
+      const lastU = upperPts[upperPts.length - 1]!;
+      ctx.font = OVERLAY_LABEL_FONT;
+      ctx.fillStyle = BB_COLOR;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('BB', lastU.x + 6, lastU.y);
     }
   }
 
@@ -434,6 +645,120 @@ export function renderIndicators(
             ctx.strokeRect(x - barW / 2, zeroY, barW, barH);
           }
         }
+      }
+    }
+
+    // ── RSI ──────────────────────────────────────────────────────────────
+    if (sp.key === 'RSI') {
+      const rsiVals = computeRSI(closes, 14);
+      let rMin = 0, rMax = 100;
+
+      // Overbought / Oversold lines
+      const obY = scaleY(RSI_OVERBOUGHT, rMin, rMax, spTop, spBottom);
+      const osY = scaleY(RSI_OVERSOLD, rMin, rMax, spTop, spBottom);
+      const midY = scaleY(50, rMin, rMax, spTop, spBottom);
+
+      ctx.strokeStyle = 'rgba(239, 68, 68, 0.3)';
+      ctx.lineWidth = 0.5;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(0, obY); ctx.lineTo(chartW, obY); ctx.stroke();
+
+      ctx.strokeStyle = 'rgba(34, 197, 94, 0.3)';
+      ctx.beginPath(); ctx.moveTo(0, osY); ctx.lineTo(chartW, osY); ctx.stroke();
+
+      ctx.strokeStyle = ZERO_LINE_COLOR;
+      ctx.beginPath(); ctx.moveTo(0, midY); ctx.lineTo(chartW, midY); ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Fill overbought/oversold zones
+      ctx.fillStyle = 'rgba(239, 68, 68, 0.04)';
+      ctx.fillRect(0, spTop, chartW, obY - spTop);
+      ctx.fillStyle = 'rgba(34, 197, 94, 0.04)';
+      ctx.fillRect(0, osY, chartW, spBottom - osY);
+
+      // RSI line
+      const rsiPts: { x: number; y: number }[] = [];
+      for (let i = 0; i < candles.length; i++) {
+        const c = candles[i]!;
+        if (c.timestamp < startTime || c.timestamp > endTime) continue;
+        const val = rsiVals[i];
+        if (val === undefined || isNaN(val)) continue;
+        rsiPts.push({ x: viewport.timeToX(c.timestamp), y: scaleY(val, rMin, rMax, spTop, spBottom) });
+      }
+      if (rsiPts.length > 1) {
+        ctx.strokeStyle = RSI_COLOR;
+        ctx.lineWidth = 1.5;
+        drawPolyline(ctx, rsiPts);
+      }
+
+      // Labels
+      ctx.font = SUBPLOT_LABEL_FONT;
+      ctx.fillStyle = SUBPLOT_LABEL_COLOR;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('70', chartW + 4, obY);
+      ctx.fillText('30', chartW + 4, osY);
+      ctx.fillText('50', chartW + 4, midY);
+    }
+
+    // ── MACD ─────────────────────────────────────────────────────────────
+    if (sp.key === 'MACD') {
+      const macdData = computeMACD(closes, 12, 26, 9);
+
+      let mMin = Infinity, mMax = -Infinity;
+      for (let i = 0; i < candles.length; i++) {
+        const c = candles[i]!;
+        if (c.timestamp < startTime || c.timestamp > endTime) continue;
+        const vals = [macdData.macd[i]!, macdData.signal[i]!, macdData.histogram[i]!];
+        for (const v of vals) {
+          if (v < mMin) mMin = v;
+          if (v > mMax) mMax = v;
+        }
+      }
+      if (!isFinite(mMin)) { mMin = -1; mMax = 1; }
+
+      // Zero line
+      const zeroY = scaleY(0, mMin, mMax, spTop, spBottom);
+      ctx.strokeStyle = ZERO_LINE_COLOR;
+      ctx.lineWidth = 0.5;
+      ctx.beginPath(); ctx.moveTo(0, zeroY); ctx.lineTo(chartW, zeroY); ctx.stroke();
+
+      // Histogram bars
+      const barW = Math.max(1, viewport.getCandleWidth() * 0.5);
+      for (let i = 0; i < candles.length; i++) {
+        const c = candles[i]!;
+        if (c.timestamp < startTime || c.timestamp > endTime) continue;
+        const hVal = macdData.histogram[i];
+        if (hVal === undefined) continue;
+        const x = viewport.timeToX(c.timestamp);
+        const hY = scaleY(hVal, mMin, mMax, spTop, spBottom);
+        ctx.fillStyle = hVal >= 0 ? MACD_HIST_BULL : MACD_HIST_BEAR;
+        if (hVal >= 0) {
+          ctx.fillRect(x - barW / 2, hY, barW, zeroY - hY);
+        } else {
+          ctx.fillRect(x - barW / 2, zeroY, barW, hY - zeroY);
+        }
+      }
+
+      // MACD line
+      const macdPts: { x: number; y: number }[] = [];
+      const sigPts: { x: number; y: number }[] = [];
+      for (let i = 0; i < candles.length; i++) {
+        const c = candles[i]!;
+        if (c.timestamp < startTime || c.timestamp > endTime) continue;
+        const mv = macdData.macd[i], sv = macdData.signal[i];
+        if (mv === undefined || sv === undefined) continue;
+        const x = viewport.timeToX(c.timestamp);
+        macdPts.push({ x, y: scaleY(mv, mMin, mMax, spTop, spBottom) });
+        sigPts.push({ x, y: scaleY(sv, mMin, mMax, spTop, spBottom) });
+      }
+      if (macdPts.length > 1) {
+        ctx.strokeStyle = MACD_LINE_COLOR;
+        ctx.lineWidth = 1.5;
+        drawPolyline(ctx, macdPts);
+        ctx.strokeStyle = MACD_SIGNAL_COLOR;
+        ctx.lineWidth = 1;
+        drawPolyline(ctx, sigPts);
       }
     }
 

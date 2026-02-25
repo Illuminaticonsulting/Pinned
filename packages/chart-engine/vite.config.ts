@@ -28,6 +28,18 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/blofin-api/, ''),
         secure: true,
       },
+      '/tv-search': {
+        target: 'https://symbol-search.tradingview.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/tv-search/, ''),
+        secure: true,
+      },
+      '/yahoo-api': {
+        target: 'https://query1.finance.yahoo.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/yahoo-api/, ''),
+        secure: true,
+      },
     },
   },
 });

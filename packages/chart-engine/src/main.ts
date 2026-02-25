@@ -15,6 +15,9 @@ import { OrderFlowSidebar } from './ui/OrderFlowSidebar';
 
 // ─── New Feature Imports ─────────────────────────────────────────────────────
 import { CommandPalette, type CommandAction } from './ui/CommandPalette';
+import { ChartTypeSelector } from './ui/ChartTypeSelector';
+import { ContextMenu, type ContextMenuItem } from './ui/ContextMenu';
+import type { ChartType } from './core/ChartState';
 import { ReplayMode } from './ui/ReplayMode';
 import { TradeJournal } from './ui/TradeJournal';
 import { AIChartAnalyst } from './ui/AIChartAnalyst';
@@ -46,6 +49,8 @@ class PinnedApp {
   private symbolService: SymbolService;
   private symbolSearch: SymbolSearch | null = null;
   private timeframeSelector: TimeframeSelector | null = null;
+  private chartTypeSelector: ChartTypeSelector | null = null;
+  private contextMenu: ContextMenu | null = null;
   // Sync controls are now part of MultiChartLayout
 
   // ── OrderFlow components ─────────────────────────────────────────────
@@ -227,6 +232,11 @@ class PinnedApp {
 
             <div class="top-bar__divider"></div>
 
+            <!-- Chart Type -->
+            <div id="chartTypeSelectorMount"></div>
+
+            <div class="top-bar__divider"></div>
+
             <!-- Timeframes -->
             <div id="timeframeSelectorMount"></div>
 
@@ -341,8 +351,10 @@ class PinnedApp {
     `;
 
     this.mountSymbolButton();
+    this.mountChartTypeSelector();
     this.mountTimeframeSelector();
     this.bindUIEvents();
+    this.contextMenu = new ContextMenu();
   }
 
   // ── Symbol Button & Search ───────────────────────────────────────────────
@@ -361,6 +373,26 @@ class PinnedApp {
       });
     }
     this.symbolSearch.open();
+  }
+
+  private mountChartTypeSelector(): void {
+    const mount = this.root.querySelector<HTMLElement>('#chartTypeSelectorMount');
+    if (!mount) return;
+
+    this.chartTypeSelector = new ChartTypeSelector({
+      current: 'candles',
+      onSelect: (type: ChartType) => {
+        // Update all panes (or active pane)
+        const pane = this.getActivePane();
+        if (pane) {
+          pane.state.setState({ chartType: type });
+          pane.renderEngine.markAllDirty();
+        }
+      },
+    });
+
+    const btn = this.chartTypeSelector.createButton();
+    mount.appendChild(btn);
   }
 
   private mountTimeframeSelector(): void {
@@ -535,6 +567,81 @@ class PinnedApp {
         if (input) { input.value = 'settings'; input.dispatchEvent(new Event('input')); }
       }, 50);
     });
+
+    // Right-click context menu on chart area
+    const chartArea = this.root.querySelector('#chartArea');
+    chartArea?.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const me = e as MouseEvent;
+      this.showContextMenu(me.clientX, me.clientY);
+    });
+  }
+
+  private showContextMenu(x: number, y: number): void {
+    if (!this.contextMenu) return;
+    const pane = this.getActivePane();
+    const indicators = pane?.state.getState().indicators ?? new Map<string, boolean>();
+
+    const indicatorItems: ContextMenuItem[] = [
+      { label: 'EMA 9', checked: indicators.get('ema9') ?? false, action: () => this.toggleIndicator('ema9') },
+      { label: 'EMA 21', checked: indicators.get('ema21') ?? false, action: () => this.toggleIndicator('ema21') },
+      { label: 'EMA 50', checked: indicators.get('ema50') ?? false, action: () => this.toggleIndicator('ema50') },
+      { label: 'EMA 200', checked: indicators.get('ema200') ?? false, action: () => this.toggleIndicator('ema200') },
+      { label: '', separator: true },
+      { label: 'SMA 20', checked: indicators.get('sma20') ?? false, action: () => this.toggleIndicator('sma20') },
+      { label: 'SMA 50', checked: indicators.get('sma50') ?? false, action: () => this.toggleIndicator('sma50') },
+      { label: 'SMA 200', checked: indicators.get('sma200') ?? false, action: () => this.toggleIndicator('sma200') },
+      { label: '', separator: true },
+      { label: 'Bollinger Bands', checked: indicators.get('bollingerBands') ?? false, action: () => this.toggleIndicator('bollingerBands') },
+      { label: 'RSI (14)', checked: indicators.get('rsi') ?? false, action: () => this.toggleIndicator('rsi') },
+      { label: 'MACD', checked: indicators.get('macd') ?? false, action: () => this.toggleIndicator('macd') },
+      { label: 'VWAP', checked: indicators.get('vwap') ?? false, action: () => this.toggleIndicator('vwap') },
+    ];
+
+    const chartTypeItems: ContextMenuItem[] = (
+      ['candles', 'hollow', 'bars', 'line', 'area', 'heikinashi', 'baseline'] as ChartType[]
+    ).map((ct) => ({
+      label: ct.charAt(0).toUpperCase() + ct.slice(1),
+      checked: (pane?.state.getState().chartType ?? 'candles') === ct,
+      action: () => {
+        if (pane) {
+          pane.state.setState({ chartType: ct });
+          pane.renderEngine.markAllDirty();
+        }
+        this.chartTypeSelector?.setCurrent(ct);
+      },
+    }));
+
+    const items: ContextMenuItem[] = [
+      { label: 'Chart Type', icon: '📊', submenu: chartTypeItems },
+      { label: 'Indicators', icon: '📈', submenu: indicatorItems },
+      { label: '', separator: true },
+      { label: 'Reset Zoom', icon: '🔄', shortcut: '⌘0', action: () => {
+        if (pane) {
+          pane.renderEngine.markAllDirty();
+        }
+      }},
+      { label: 'Fit All Data', icon: '↔', action: () => {
+        if (pane) {
+          pane.renderEngine.markAllDirty();
+        }
+      }},
+      { label: '', separator: true },
+      { label: 'Screenshot', icon: '📸', shortcut: '⌘⇧P', action: () => this.takeScreenshot() },
+      { label: 'Share Chart', icon: '🔗', shortcut: '⌘⇧S', action: () => this.openShareDialog() },
+    ];
+
+    this.contextMenu.show(x, y, items);
+  }
+
+  private toggleIndicator(key: string): void {
+    const pane = this.getActivePane();
+    if (!pane) return;
+    const indicators = pane.state.getState().indicators;
+    const current = indicators.get(key) ?? false;
+    indicators.set(key, !current);
+    pane.state.setState({ indicators: new Map(indicators) });
+    pane.renderEngine.markAllDirty();
   }
 
   private bindToggle(id: string, handler: () => void): void {
@@ -727,6 +834,13 @@ class PinnedApp {
 
     // Update timeframe selector
     this.timeframeSelector?.setCurrent(this.activeTimeframe);
+
+    // Update chart type selector
+    const pane = this.getActivePane();
+    if (pane) {
+      const ct = pane.state.getState().chartType ?? 'candles';
+      this.chartTypeSelector?.setCurrent(ct);
+    }
   }
 
   private updateSymbolCount(): void {
@@ -1175,6 +1289,61 @@ class PinnedApp {
         execute: () => this.togglePatterns(),
       },
 
+      // ── Chart Types ─────────────────────────────────────────────────
+      ...(['candles', 'hollow', 'bars', 'line', 'area', 'heikinashi', 'baseline'] as ChartType[]).map((ct) => ({
+        id: `chart:${ct}`,
+        label: `Chart Type: ${ct.charAt(0).toUpperCase() + ct.slice(1)}`,
+        description: `Switch to ${ct} chart style`,
+        category: 'navigation' as const,
+        icon: '📊',
+        keywords: ['chart', 'type', 'style', ct],
+        execute: () => {
+          const pane = this.getActivePane();
+          if (pane) {
+            pane.state.setState({ chartType: ct });
+            pane.renderEngine.markAllDirty();
+          }
+          this.chartTypeSelector?.setCurrent(ct);
+        },
+      })),
+
+      // ── Indicators ─────────────────────────────────────────────────
+      ...[
+        { key: 'ema9', label: 'EMA 9', icon: '〰️' },
+        { key: 'ema21', label: 'EMA 21', icon: '〰️' },
+        { key: 'ema50', label: 'EMA 50', icon: '〰️' },
+        { key: 'ema200', label: 'EMA 200', icon: '〰️' },
+        { key: 'sma20', label: 'SMA 20', icon: '📈' },
+        { key: 'sma50', label: 'SMA 50', icon: '📈' },
+        { key: 'sma100', label: 'SMA 100', icon: '📈' },
+        { key: 'sma200', label: 'SMA 200', icon: '📈' },
+        { key: 'bollingerBands', label: 'Bollinger Bands', icon: '📉' },
+        { key: 'rsi', label: 'RSI (14)', icon: '📊' },
+        { key: 'macd', label: 'MACD (12/26/9)', icon: '📊' },
+        { key: 'vwap', label: 'VWAP', icon: '📏' },
+        { key: 'anchoredVwap', label: 'Anchored VWAP', icon: '📏' },
+        { key: 'cumDelta', label: 'Cumulative Delta', icon: '🔺' },
+        { key: 'ofi', label: 'Order Flow Imbalance', icon: '⚡' },
+        { key: 'fundingRate', label: 'Funding Rate', icon: '💰' },
+      ].map((ind) => ({
+        id: `indicator:${ind.key}`,
+        label: `Indicator: ${ind.label}`,
+        description: `Toggle ${ind.label} indicator`,
+        category: 'orderflow' as const,
+        icon: ind.icon,
+        keywords: ['indicator', 'overlay', 'study', ind.label.toLowerCase(), ind.key],
+        execute: () => {
+          const pane = this.getActivePane();
+          if (!pane) return;
+          const indicators = pane.state.getState().indicators;
+          const current = indicators.get(ind.key) ?? false;
+          indicators.set(ind.key, !current);
+          pane.state.setState({ indicators: new Map(indicators) });
+          pane.renderEngine.markAllDirty();
+          this.showToast(`${ind.label} ${!current ? 'ON' : 'OFF'}`);
+        },
+      })),
+
       // ── Drawing Tools ──────────────────────────────────────────────
       ...[
         { id: 'trendline', label: 'Trend Line', shortcut: 'T', icon: '📏' },
@@ -1372,6 +1541,7 @@ class PinnedApp {
     this.adaptiveLayout.stopMonitoring();
     this.smartAlerts.destroy();
     this.splitComparison.destroy();
+    this.contextMenu?.hide();
 
     // Cleanup keyboard listener
     if (this._keydownHandler) {

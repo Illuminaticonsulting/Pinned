@@ -1,41 +1,74 @@
 /**
  * SymbolService.ts
- * Auto-syncs all available BloFin trading instruments.
- * Fetches the full instrument list on startup, refreshes periodically,
- * and categorizes symbols for the search UI.
+ * Universal symbol service that searches TradingView's public symbol search API
+ * for ANY symbol worldwide — stocks, crypto, forex, indices, futures, bonds, CFDs.
+ * Also loads BloFin instruments for crypto perpetuals.
  */
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const REST_PROXY = '/blofin-api';
-const REFRESH_INTERVAL = 5 * 60_000; // 5 minutes
+const TV_SEARCH_PROXY = '/tv-search';
+const BLOFIN_REST = '/blofin-api';
+const REFRESH_INTERVAL = 5 * 60_000;
 const STORAGE_KEY = 'pinned:symbols';
 const FAVORITES_KEY = 'pinned:symbol-favorites';
+const RECENT_KEY = 'pinned:symbol-recent';
+const MAX_RECENT = 20;
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-export interface Instrument {
-  instId: string;        // e.g. "BTC-USDT"
-  baseCurrency: string;  // e.g. "BTC"
-  quoteCurrency: string; // e.g. "USDT"
-  contractValue: string;
-  maxLeverage: string;
-  tickSize: string;
-  state: string;         // "live" | "suspend"
-  instType: string;      // "SWAP"
-  contractType: string;  // "linear"
-}
+export type SymbolCategory =
+  | 'favorites' | 'recent' | 'top' | 'crypto' | 'stocks' | 'forex'
+  | 'indices' | 'futures' | 'bonds' | 'cfd'
+  | 'defi' | 'layer1' | 'layer2' | 'meme' | 'ai' | 'gaming' | 'all';
 
-export type SymbolCategory = 'favorites' | 'top' | 'defi' | 'layer1' | 'layer2' | 'meme' | 'ai' | 'gaming' | 'all';
+export type AssetType = 'crypto' | 'stock' | 'forex' | 'index' | 'futures' | 'bond' | 'cfd' | 'fund' | 'economic';
 
 export interface SymbolInfo {
-  instId: string;
-  base: string;
-  quote: string;
+  instId: string;        // Normalized ID: "BTC-USDT", "AAPL", "EUR-USD"
+  base: string;          // Base currency/ticker
+  quote: string;         // Quote currency or exchange
+  displayName: string;   // "BTC/USDT", "Apple Inc", "EUR/USD"
+  description: string;   // Full description
+  exchange: string;      // "BloFin", "NASDAQ", "FOREX"
+  type: AssetType;       // Asset classification
   maxLeverage: number;
   tickSize: number;
   categories: SymbolCategory[];
   isLive: boolean;
+  source: 'blofin' | 'binance' | 'bybit' | 'yahoo' | 'tradingview' | 'demo';
+  tvSymbol?: string;     // TradingView symbol format e.g. "NASDAQ:AAPL"
+  logoUrl?: string;      // Symbol logo URL
+  country?: string;      // Country code
+  currency?: string;     // Trading currency
+}
+
+export interface Instrument {
+  instId: string;
+  baseCurrency: string;
+  quoteCurrency: string;
+  contractValue: string;
+  maxLeverage: string;
+  tickSize: string;
+  state: string;
+  instType: string;
+  contractType: string;
+}
+
+// ─── TradingView Search Response Types ───────────────────────────────────────
+
+interface TVSearchResult {
+  symbol: string;
+  description: string;
+  type: string;
+  exchange: string;
+  currency_code?: string;
+  provider_id?: string;
+  source2?: { key: string; name: string };
+  country?: string;
+  typespecs?: string[];
+  prefix?: string;
+  logoid?: string;
 }
 
 // ─── Category Classification ─────────────────────────────────────────────────
@@ -76,8 +109,8 @@ const GAMING_COINS = new Set([
   'PORTAL', 'XPRT', 'BEAM', 'YGG', 'SUPER',
 ]);
 
-function classifySymbol(base: string): SymbolCategory[] {
-  const cats: SymbolCategory[] = [];
+function classifyCrypto(base: string): SymbolCategory[] {
+  const cats: SymbolCategory[] = ['crypto'];
   if (TOP_COINS.has(base)) cats.push('top');
   if (DEFI_COINS.has(base)) cats.push('defi');
   if (LAYER1_COINS.has(base)) cats.push('layer1');
@@ -89,15 +122,46 @@ function classifySymbol(base: string): SymbolCategory[] {
   return cats;
 }
 
+function tvTypeToAssetType(tvType: string): AssetType {
+  switch (tvType) {
+    case 'stock': return 'stock';
+    case 'crypto': return 'crypto';
+    case 'forex': return 'forex';
+    case 'index': return 'index';
+    case 'futures': return 'futures';
+    case 'bond': return 'bond';
+    case 'cfd': return 'cfd';
+    case 'fund': return 'fund';
+    case 'economic': return 'economic';
+    default: return 'stock';
+  }
+}
+
+function assetTypeToCategory(type: AssetType): SymbolCategory {
+  switch (type) {
+    case 'crypto': return 'crypto';
+    case 'stock': return 'stocks';
+    case 'forex': return 'forex';
+    case 'index': return 'indices';
+    case 'futures': return 'futures';
+    case 'bond': return 'bonds';
+    case 'cfd': return 'cfd';
+    default: return 'all';
+  }
+}
+
 // ─── SymbolService (singleton) ───────────────────────────────────────────────
 
 export class SymbolService {
   private static instance: SymbolService | null = null;
   private symbols: Map<string, SymbolInfo> = new Map();
   private favorites: Set<string> = new Set();
+  private recentSymbols: string[] = [];
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
   private listeners: Set<() => void> = new Set();
   private loaded = false;
+  private searchCache: Map<string, { results: SymbolInfo[]; ts: number }> = new Map();
+  private pendingSearch: AbortController | null = null;
 
   static getInstance(): SymbolService {
     if (!SymbolService.instance) {
@@ -112,45 +176,172 @@ export class SymbolService {
 
   // ── Public API ─────────────────────────────────────────────────────────
 
-  /** Initialize: fetch instruments from BloFin, start refresh timer */
   async init(): Promise<void> {
-    await this.fetchInstruments();
-    this.refreshTimer = setInterval(() => this.fetchInstruments(), REFRESH_INTERVAL);
+    await this.fetchBloFinInstruments();
+    this.refreshTimer = setInterval(() => this.fetchBloFinInstruments(), REFRESH_INTERVAL);
   }
 
-  /** Get all live symbols */
   getSymbols(): SymbolInfo[] {
     return [...this.symbols.values()].filter(s => s.isLive);
   }
 
-  /** Get symbols by category */
   getByCategory(cat: SymbolCategory): SymbolInfo[] {
     if (cat === 'favorites') {
       return this.getSymbols().filter(s => this.favorites.has(s.instId));
     }
+    if (cat === 'recent') {
+      return this.recentSymbols
+        .map(id => this.symbols.get(id))
+        .filter((s): s is SymbolInfo => !!s);
+    }
     return this.getSymbols().filter(s => s.categories.includes(cat));
   }
 
-  /** Search symbols by query (matches instId or base) */
+  /** Local search (BloFin instruments only) */
   search(query: string): SymbolInfo[] {
     const q = query.toUpperCase().trim();
     if (!q) return this.getSymbols();
     return this.getSymbols().filter(s =>
-      s.instId.includes(q) || s.base.includes(q)
+      s.instId.includes(q) || s.base.includes(q) || s.displayName.toUpperCase().includes(q)
     );
   }
 
-  /** Get a specific symbol info */
+  /**
+   * Universal search — queries TradingView's public symbol search API
+   * to find ANY symbol worldwide: stocks, crypto, forex, indices, futures, bonds.
+   */
+  async searchUniversal(query: string, type?: string): Promise<SymbolInfo[]> {
+    const q = query.trim();
+    if (!q) return this.getSymbols().slice(0, 50);
+
+    // Check cache (5s TTL)
+    const cacheKey = `${q}|${type ?? ''}`;
+    const cached = this.searchCache.get(cacheKey);
+    if (cached && Date.now() - cached.ts < 5000) return cached.results;
+
+    // Cancel any pending search
+    if (this.pendingSearch) {
+      this.pendingSearch.abort();
+    }
+    this.pendingSearch = new AbortController();
+
+    try {
+      const localResults = this.search(q).slice(0, 10);
+
+      // Query TradingView symbol search
+      const params = new URLSearchParams({
+        text: q,
+        hl: '1',
+        exchange: '',
+        lang: 'en',
+        search_type: type ?? '',
+        domain: 'production',
+        sort_by_country: 'US',
+      });
+
+      const res = await fetch(`${TV_SEARCH_PROXY}/symbol_search/v3/?${params}`, {
+        signal: this.pendingSearch.signal,
+        headers: { 'Accept': 'application/json' },
+      });
+
+      if (!res.ok) {
+        console.warn(`[SymbolService] TV search failed: ${res.status}`);
+        return localResults;
+      }
+
+      const data = await res.json();
+      const tvResults: TVSearchResult[] = Array.isArray(data?.symbols) ? data.symbols : (Array.isArray(data) ? data : []);
+
+      const results: SymbolInfo[] = [];
+      const seen = new Set<string>();
+
+      // Local BloFin results first
+      for (const s of localResults) {
+        results.push(s);
+        seen.add(s.instId);
+      }
+
+      // TradingView results
+      for (const tv of tvResults.slice(0, 40)) {
+        const assetType = tvTypeToAssetType(tv.type);
+        const instId = this.tvToInstId(tv);
+
+        if (seen.has(instId)) continue;
+        seen.add(instId);
+
+        const categories: SymbolCategory[] = [assetTypeToCategory(assetType), 'all'];
+        if (assetType === 'crypto') {
+          const base = tv.symbol.split(/[\/\-]/)[0] ?? tv.symbol;
+          categories.push(...classifyCrypto(base).filter(c => !categories.includes(c)));
+        }
+
+        const info: SymbolInfo = {
+          instId,
+          base: tv.symbol.split(/[\/\-]/)[0] ?? tv.symbol,
+          quote: tv.currency_code ?? tv.symbol.split(/[\/\-]/)[1] ?? 'USD',
+          displayName: tv.description || tv.symbol,
+          description: `${tv.exchange}: ${tv.description || tv.symbol}`,
+          exchange: tv.exchange,
+          type: assetType,
+          maxLeverage: 0,
+          tickSize: 0.01,
+          categories,
+          isLive: true,
+          source: assetType === 'crypto' ? 'binance' : 'yahoo',
+          tvSymbol: `${tv.exchange}:${tv.symbol}`,
+          logoUrl: tv.logoid ? `https://s3-symbol-logo.tradingview.com/${tv.logoid}.svg` : undefined,
+          country: tv.country,
+          currency: tv.currency_code,
+        };
+
+        // Also cache in our symbols map for later retrieval
+        this.symbols.set(instId, info);
+        results.push(info);
+      }
+
+      this.searchCache.set(cacheKey, { results, ts: Date.now() });
+      return results;
+    } catch (err: any) {
+      if (err.name === 'AbortError') return [];
+      console.warn('[SymbolService] Universal search error:', err);
+      return this.search(q);
+    } finally {
+      this.pendingSearch = null;
+    }
+  }
+
+  /** Convert a TradingView result to our instId format */
+  private tvToInstId(tv: TVSearchResult): string {
+    if (tv.type === 'crypto') {
+      const sym = tv.symbol.replace('/', '-');
+      if (sym.includes('-')) return sym;
+      for (const q of ['USDT', 'USDC', 'USD', 'BTC', 'ETH', 'BUSD']) {
+        if (sym.endsWith(q)) return `${sym.slice(0, -q.length)}-${q}`;
+      }
+      return sym;
+    }
+    if (tv.type === 'forex') {
+      const sym = tv.symbol.replace('/', '-');
+      if (sym.includes('-')) return sym;
+      if (sym.length === 6) return `${sym.slice(0, 3)}-${sym.slice(3)}`;
+      return sym;
+    }
+    return tv.symbol;
+  }
+
+  addRecent(instId: string): void {
+    this.recentSymbols = [instId, ...this.recentSymbols.filter(s => s !== instId)].slice(0, MAX_RECENT);
+    this.saveRecent();
+  }
+
   getSymbol(instId: string): SymbolInfo | undefined {
     return this.symbols.get(instId);
   }
 
-  /** Check if a symbol is favorited */
   isFavorite(instId: string): boolean {
     return this.favorites.has(instId);
   }
 
-  /** Toggle favorite status */
   toggleFavorite(instId: string): void {
     if (this.favorites.has(instId)) {
       this.favorites.delete(instId);
@@ -161,18 +352,15 @@ export class SymbolService {
     this.notifyListeners();
   }
 
-  /** Get total count */
   getCount(): number {
     return this.getSymbols().length;
   }
 
-  /** Subscribe to symbol list changes (new listings/delistings) */
   onChange(cb: () => void): () => void {
     this.listeners.add(cb);
     return () => this.listeners.delete(cb);
   }
 
-  /** Is the service loaded? */
   isLoaded(): boolean {
     return this.loaded;
   }
@@ -183,9 +371,9 @@ export class SymbolService {
 
   // ── Private ────────────────────────────────────────────────────────────
 
-  private async fetchInstruments(): Promise<void> {
+  private async fetchBloFinInstruments(): Promise<void> {
     try {
-      const url = `${REST_PROXY}/api/v1/market/instruments?instType=SWAP`;
+      const url = `${BLOFIN_REST}/api/v1/market/instruments?instType=SWAP`;
       const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
@@ -193,52 +381,43 @@ export class SymbolService {
 
       const instruments = json.data as Instrument[];
       const prevCount = this.symbols.size;
-      const newSymbols = new Map<string, SymbolInfo>();
 
       for (const inst of instruments) {
         const base = inst.baseCurrency;
         const quote = inst.quoteCurrency;
-        newSymbols.set(inst.instId, {
+        this.symbols.set(inst.instId, {
           instId: inst.instId,
           base,
           quote,
+          displayName: `${base}/${quote}`,
+          description: `${base}/${quote} Perpetual`,
+          exchange: 'BloFin',
+          type: 'crypto',
           maxLeverage: Number(inst.maxLeverage),
           tickSize: Number(inst.tickSize),
-          categories: classifySymbol(base),
+          categories: classifyCrypto(base),
           isLive: inst.state === 'live',
+          source: 'blofin',
         });
       }
 
-      this.symbols = newSymbols;
       this.loaded = true;
       this.saveToStorage();
-
-      const newCount = this.symbols.size;
-      if (prevCount > 0 && newCount !== prevCount) {
-        console.log(`[SymbolService] Symbol list updated: ${prevCount} → ${newCount}`);
-      } else {
-        console.log(`[SymbolService] Loaded ${newCount} instruments`);
-      }
-
+      console.log(`[SymbolService] Loaded ${this.symbols.size} instruments`);
       this.notifyListeners();
     } catch (err) {
       console.warn('[SymbolService] Failed to fetch instruments:', err);
-      // If we have cached data, keep using it
-      if (this.symbols.size === 0) {
-        this.loadFromStorage();
-      }
+      if (this.symbols.size === 0) this.loadFromStorage();
     }
   }
 
   private notifyListeners(): void {
-    for (const cb of this.listeners) {
-      try { cb(); } catch {}
-    }
+    for (const cb of this.listeners) { try { cb(); } catch {} }
   }
 
   private saveToStorage(): void {
     try {
-      const data = [...this.symbols.values()];
+      const data = [...this.symbols.values()].filter(s => s.source === 'blofin');
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     } catch {}
   }
@@ -248,9 +427,7 @@ export class SymbolService {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const data = JSON.parse(raw) as SymbolInfo[];
-        for (const s of data) {
-          this.symbols.set(s.instId, s);
-        }
+        for (const s of data) this.symbols.set(s.instId, s);
         this.loaded = true;
       }
     } catch {}
@@ -258,18 +435,23 @@ export class SymbolService {
     try {
       const raw = localStorage.getItem(FAVORITES_KEY);
       if (raw) {
-        const arr = JSON.parse(raw) as string[];
-        this.favorites = new Set(arr);
+        this.favorites = new Set(JSON.parse(raw) as string[]);
       } else {
-        // Default favorites
-        this.favorites = new Set(['BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'DOGE-USDT', 'ARB-USDT']);
+        this.favorites = new Set(['BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'AAPL', 'SPY']);
       }
+    } catch {}
+
+    try {
+      const raw = localStorage.getItem(RECENT_KEY);
+      if (raw) this.recentSymbols = JSON.parse(raw) as string[];
     } catch {}
   }
 
   private saveFavorites(): void {
-    try {
-      localStorage.setItem(FAVORITES_KEY, JSON.stringify([...this.favorites]));
-    } catch {}
+    try { localStorage.setItem(FAVORITES_KEY, JSON.stringify([...this.favorites])); } catch {}
+  }
+
+  private saveRecent(): void {
+    try { localStorage.setItem(RECENT_KEY, JSON.stringify(this.recentSymbols)); } catch {}
   }
 }

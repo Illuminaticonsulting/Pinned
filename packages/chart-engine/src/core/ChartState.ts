@@ -108,12 +108,17 @@ export interface Drawing {
   readonly updatedAt: number;
 }
 
+// ─── Chart Types ───────────────────────────────────────────────────────────────
+
+export type ChartType = 'candles' | 'hollow' | 'bars' | 'line' | 'area' | 'heikinashi' | 'baseline';
+
 // ─── Chart State Shape ─────────────────────────────────────────────────────────
 
 export interface ChartStateData {
   symbol: string;
   exchange: string;
   timeframe: string;
+  chartType: ChartType;
   candles: Candle[];
   visibleRange: { startTime: number; endTime: number };
   priceRange: { low: number; high: number };
@@ -151,6 +156,7 @@ function createDefaultState(): ChartStateData {
     symbol: 'BTC/USDT',
     exchange: 'binance',
     timeframe: '1m',
+    chartType: 'candles',
     candles: [],
     visibleRange: { startTime: 0, endTime: 0 },
     priceRange: { low: 0, high: 0 },
