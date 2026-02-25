@@ -99,18 +99,20 @@ export class ChartTypeSelector {
   private open(): void {
     this.overlay = document.createElement('div');
     this.overlay.className = 'ct-overlay';
-    this.overlay.addEventListener('click', (e) => {
+    this.overlay.addEventListener('mousedown', (e) => {
       if (e.target === this.overlay) this.close();
     });
 
     const panel = document.createElement('div');
     panel.className = 'ct-panel';
 
-    // Position below button
+    // Position below button using fixed positioning
     if (this.btnEl) {
       const rect = this.btnEl.getBoundingClientRect();
+      panel.style.position = 'fixed';
       panel.style.top = `${rect.bottom + 4}px`;
       panel.style.left = `${rect.left}px`;
+      panel.style.zIndex = '99999';
     }
 
     panel.innerHTML = `

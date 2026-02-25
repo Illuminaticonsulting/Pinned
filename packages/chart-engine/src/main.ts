@@ -28,6 +28,7 @@ import { SessionStatsDashboard } from './ui/SessionStatsDashboard';
 import { SmartAlerts } from './ui/SmartAlerts';
 import { SplitComparison } from './ui/SplitComparison';
 import { TimeframeSelector, getTimeframeApiKey } from './ui/TimeframeSelector';
+import { SettingsPanel } from './ui/SettingsPanel';
 import { heatmapStore } from './renderers/HeatmapOverlayRenderer';
 import type { HeatmapCell } from './renderers/HeatmapOverlayRenderer';
 
@@ -78,6 +79,7 @@ class PinnedApp {
   private sessionStats: SessionStatsDashboard;
   private smartAlerts: SmartAlerts;
   private splitComparison: SplitComparison;
+  private settingsPanel: SettingsPanel;
 
   constructor(rootEl: HTMLElement) {
     this.root = rootEl;
@@ -170,6 +172,15 @@ class PinnedApp {
       getCurrentSymbol: () => this.activeSymbol,
       getCurrentTimeframe: () => this.activeTimeframe,
       onToast: (msg, dur) => this.showToast(msg, dur),
+    });
+
+    this.settingsPanel = new SettingsPanel({
+      onSettingsChange: (settings) => {
+        // Apply settings to active pane
+        // Could broadcast to all panes in the future
+        document.documentElement.style.setProperty('--candle-up', settings.candleUpColor);
+        document.documentElement.style.setProperty('--candle-down', settings.candleDownColor);
+      },
     });
   }
 
@@ -375,6 +386,19 @@ class PinnedApp {
     this.symbolSearch.open();
   }
 
+  /** Open symbol search with an initial character pre-filled (type-to-search) */
+  private openSymbolSearchWithChar(char: string): void {
+    this.openSymbolSearch();
+    // Pre-fill the search input with the typed character
+    setTimeout(() => {
+      const input = document.querySelector<HTMLInputElement>('.ss-input');
+      if (input) {
+        input.value = char;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    }, 50);
+  }
+
   private mountChartTypeSelector(): void {
     const mount = this.root.querySelector<HTMLElement>('#chartTypeSelectorMount');
     if (!mount) return;
@@ -445,7 +469,18 @@ class PinnedApp {
 
   private updateSymbolButton(): void {
     const nameEl = this.root.querySelector('.symbol-button__name');
-    if (nameEl) nameEl.textContent = this.activeSymbol.replace('-', '/');
+    if (!nameEl) return;
+
+    // Try to get a proper display name from SymbolService
+    const info = this.symbolService.getSymbol(this.activeSymbol);
+    if (info) {
+      // For crypto: "BTC/USDT", for stocks: "AAPL", for gold: show description
+      nameEl.textContent = info.type === 'crypto'
+        ? this.activeSymbol.replace('-', '/')
+        : info.base || this.activeSymbol;
+    } else {
+      nameEl.textContent = this.activeSymbol.replace('-', '/');
+    }
   }
 
   // ── Sync Controls (integrated into MultiChartLayout) ──────────────────
@@ -550,7 +585,7 @@ class PinnedApp {
     // Indicator toggle — opens command palette filtered to indicators
     const indicatorBtn = this.root.querySelector('#indicatorToggle');
     indicatorBtn?.addEventListener('click', () => {
-      this.commandPalette.toggle();
+      this.commandPalette.open();
       // After opening, pre-fill search with "indicator" to filter
       setTimeout(() => {
         const input = document.querySelector<HTMLInputElement>('.cmd-palette-input');
@@ -558,14 +593,10 @@ class PinnedApp {
       }, 50);
     });
 
-    // Settings button — opens command palette filtered to settings
+    // Settings button — opens real settings panel
     const settingsBtn = this.root.querySelector('#settingsBtn');
     settingsBtn?.addEventListener('click', () => {
-      this.commandPalette.toggle();
-      setTimeout(() => {
-        const input = document.querySelector<HTMLInputElement>('.cmd-palette-input');
-        if (input) { input.value = 'settings'; input.dispatchEvent(new Event('input')); }
-      }, 50);
+      this.settingsPanel.toggle();
     });
 
     // Right-click context menu on chart area
@@ -815,6 +846,14 @@ class PinnedApp {
           if (this.toolbar) this.toolbar.setActiveTool(toolId);
           this.sessionStats.recordEvent({ type: 'draw_tool', detail: toolId, timestamp: Date.now() });
         }
+        return;
+      }
+
+      // Type-to-search: any single alphanumeric key on canvas opens symbol search
+      // with that character pre-filled (like TradingView)
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && /^[A-Z0-9]$/.test(key)) {
+        e.preventDefault();
+        this.openSymbolSearchWithChar(e.key);
         return;
       }
     };
@@ -1541,6 +1580,7 @@ class PinnedApp {
     this.adaptiveLayout.stopMonitoring();
     this.smartAlerts.destroy();
     this.splitComparison.destroy();
+    this.settingsPanel.close();
     this.contextMenu?.hide();
 
     // Cleanup keyboard listener

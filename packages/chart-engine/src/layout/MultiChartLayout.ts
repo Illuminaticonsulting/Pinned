@@ -235,7 +235,12 @@ export class MultiChartLayout {
     this.triggerBtn?.classList.add('open');
 
     if (!this.dropdown) this.dropdown = this.buildDropdown();
-    this.selectorWrapper?.appendChild(this.dropdown);
+
+    // Append to body so the dropdown isn't clipped by parent overflow
+    document.body.appendChild(this.dropdown);
+
+    // Position below trigger button
+    this.positionDropdown();
     requestAnimationFrame(() => this.dropdown?.classList.add('open'));
 
     // Close handlers
@@ -243,10 +248,19 @@ export class MultiChartLayout {
       if (e.key === 'Escape') this.closeDropdown();
     };
     this._clickOutside = (e: MouseEvent) => {
-      if (!this.selectorWrapper?.contains(e.target as Node)) this.closeDropdown();
+      if (!this.selectorWrapper?.contains(e.target as Node) && !this.dropdown?.contains(e.target as Node)) this.closeDropdown();
     };
     document.addEventListener('keydown', this._escHandler);
     setTimeout(() => document.addEventListener('mousedown', this._clickOutside!), 0);
+  }
+
+  private positionDropdown(): void {
+    if (!this.triggerBtn || !this.dropdown) return;
+    const rect = this.triggerBtn.getBoundingClientRect();
+    this.dropdown.style.position = 'fixed';
+    this.dropdown.style.top = `${rect.bottom + 6}px`;
+    this.dropdown.style.left = `${rect.left + rect.width / 2}px`;
+    this.dropdown.style.transform = 'translateX(-50%)';
   }
 
   private closeDropdown(): void {
