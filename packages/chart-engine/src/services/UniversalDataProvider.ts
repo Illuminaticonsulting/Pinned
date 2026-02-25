@@ -12,6 +12,7 @@
  */
 
 import type { Candle } from '../core/ChartState';
+import { SymbolService, type SymbolInfo, type AssetType } from './SymbolService';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -55,6 +56,12 @@ const BYBIT_TF: Record<string, string> = {
   '1d': 'D', '1w': 'W', '1M': 'M',
 };
 
+const YAHOO_TF: Record<string, string> = {
+  '1m': '1m', '3m': '5m', '5m': '5m', '15m': '15m', '30m': '30m',
+  '1h': '1h', '2h': '1h', '4h': '1h', '6h': '1d', '12h': '1d',
+  '1d': '1d', '1w': '1wk', '1M': '1mo',
+};
+
 // ── Common stock tickers that indicate a stock/ETF symbol ────────────────────
 
 const STOCK_EXCHANGES = new Set([
@@ -78,6 +85,74 @@ function looksLikeIndex(symbol: string): boolean {
   return indices.has(symbol.toUpperCase());
 }
 
+/** Convert instId to Yahoo Finance ticker symbol */
+function toYahooSymbol(instId: string, info?: SymbolInfo): string {
+  const upper = instId.toUpperCase();
+
+  // Futures: "GC1!", "CL1!", "ES1!" → "GC=F", "CL=F", "ES=F"
+  if (/\d+!$/.test(upper)) {
+    return upper.replace(/\d+!$/, '') + '=F';
+  }
+
+  // Common commodity / precious metal CFDs
+  const commodityMap: Record<string, string> = {
+    'XAUUSD': 'GC=F', 'XAGUSD': 'SI=F', 'XPTUSD': 'PL=F', 'XPDUSD': 'PA=F',
+    'USOIL': 'CL=F', 'UKOIL': 'BZ=F', 'NATGAS': 'NG=F', 'NGAS': 'NG=F',
+    'COPPER': 'HG=F', 'WHEAT': 'ZW=F', 'CORN': 'ZC=F', 'SOYBEAN': 'ZS=F',
+    'COTTON': 'CT=F', 'COFFEE': 'KC=F', 'COCOA': 'CC=F', 'SUGAR': 'SB=F',
+  };
+  if (commodityMap[upper]) return commodityMap[upper]!;
+
+  // Forex: "EUR-USD" → "EURUSD=X"
+  if (info?.type === 'forex' || /^[A-Z]{3}-[A-Z]{3}$/.test(upper)) {
+    return upper.replace('-', '') + '=X';
+  }
+
+  // Indices
+  const indexMap: Record<string, string> = {
+    'SPX': '^GSPC', 'DJI': '^DJI', 'NDX': '^NDX', 'RUT': '^RUT', 'VIX': '^VIX',
+    'FTSE': '^FTSE', 'DAX': '^GDAXI', 'CAC': '^FCHI', 'NIKKEI': '^N225', 'HSI': '^HSI',
+  };
+  if (indexMap[upper]) return indexMap[upper]!;
+
+  // Stocks / ETFs pass through as-is
+  return instId;
+}
+
+/** Map AssetType → SymbolMeta.type */
+function mapAssetType(type: AssetType): 'crypto' | 'stock' | 'forex' | 'index' | 'commodity' {
+  switch (type) {
+    case 'crypto': return 'crypto';
+    case 'stock': case 'fund': case 'bond': return 'stock';
+    case 'forex': return 'forex';
+    case 'index': case 'economic': return 'index';
+    case 'futures': case 'cfd': return 'commodity';
+    default: return 'stock';
+  }
+}
+
+/** Convert SymbolInfo (from SymbolService search cache) into SymbolMeta */
+function symbolInfoToMeta(info: SymbolInfo): SymbolMeta {
+  const isCrypto = info.type === 'crypto';
+  const yahooSym = toYahooSymbol(info.instId, info);
+
+  let source: DataSource;
+  if (isCrypto) {
+    source = info.source === 'binance' ? 'binance' : info.source === 'bybit' ? 'bybit' : 'blofin';
+  } else {
+    source = 'yahoo';
+  }
+
+  return {
+    symbol: info.instId,
+    displayName: info.displayName,
+    type: mapAssetType(info.type),
+    source,
+    exchange: info.exchange,
+    sourceSymbol: isCrypto ? info.instId : yahooSym,
+  };
+}
+
 // ─── Symbol Resolution ───────────────────────────────────────────────────────
 
 /**
@@ -86,7 +161,31 @@ function looksLikeIndex(symbol: string): boolean {
 export function resolveSymbol(rawSymbol: string): SymbolMeta {
   const symbol = rawSymbol.trim().toUpperCase();
 
-  // Crypto: contains dash with USDT/USDC/BTC/ETH/BUSD quote
+  // 1) Check SymbolService for cached metadata from TradingView search
+  try {
+    const svc = SymbolService.getInstance();
+    const info = svc.getSymbol(rawSymbol) || svc.getSymbol(symbol);
+    if (info) {
+      return symbolInfoToMeta(info);
+    }
+  } catch {
+    // SymbolService may not be initialized yet — fall through to heuristics
+  }
+
+  // 2) Futures: "GC1!", "CL1!", "ES1!" etc.
+  if (/\d+!$/.test(symbol)) {
+    const base = symbol.replace(/\d+!$/, '');
+    return {
+      symbol,
+      displayName: base,
+      type: 'commodity',
+      source: 'yahoo',
+      exchange: 'Futures',
+      sourceSymbol: toYahooSymbol(symbol),
+    };
+  }
+
+  // 3) Crypto: contains dash with USDT/USDC/BTC/ETH/BUSD quote
   const cryptoQuotes = ['USDT', 'USDC', 'BTC', 'ETH', 'BUSD', 'TUSD', 'DAI', 'USD'];
   const parts = symbol.split('-');
 
@@ -234,6 +333,56 @@ async function fetchBybit(symbol: string, timeframe: string, limit: number): Pro
   })).sort((a, b) => a.timestamp - b.timestamp);
 }
 
+/** Fetch candles from Yahoo Finance (stocks, forex, indices, commodities, futures) */
+async function fetchYahoo(yahooSymbol: string, timeframe: string, limit: number): Promise<Candle[]> {
+  const interval = YAHOO_TF[timeframe] ?? '1d';
+
+  // Calculate time range from interval + limit
+  const intervalMs: Record<string, number> = {
+    '1m': 60_000, '5m': 300_000, '15m': 900_000, '30m': 1_800_000,
+    '1h': 3_600_000, '1d': 86_400_000, '1wk': 604_800_000, '1mo': 2_592_000_000,
+  };
+  const periodMs = (intervalMs[interval] ?? 86_400_000) * limit * 1.5;
+  const period2 = Math.floor(Date.now() / 1000);
+  const period1 = Math.floor((Date.now() - periodMs) / 1000);
+
+  const url = `/yahoo-api/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?interval=${interval}&period1=${period1}&period2=${period2}`;
+  const res = await fetchWithRetry(url);
+  const json = await res.json();
+
+  const result = json.chart?.result?.[0];
+  if (!result?.timestamp?.length) throw new Error('Yahoo: empty data');
+
+  const timestamps: number[] = result.timestamp;
+  const quote = result.indicators?.quote?.[0];
+  if (!quote) throw new Error('Yahoo: no quote data');
+
+  const candles: Candle[] = [];
+  for (let i = 0; i < timestamps.length; i++) {
+    const o = quote.open?.[i];
+    const h = quote.high?.[i];
+    const l = quote.low?.[i];
+    const c = quote.close?.[i];
+    const v = quote.volume?.[i];
+    // Skip null entries (market closed)
+    if (o == null || h == null || l == null || c == null) continue;
+
+    candles.push({
+      timestamp: timestamps[i]! * 1000, // Yahoo uses seconds, we use ms
+      open: Number(o),
+      high: Number(h),
+      low: Number(l),
+      close: Number(c),
+      volume: Number(v ?? 0),
+      buyVolume: 0,
+      sellVolume: 0,
+    });
+  }
+
+  if (candles.length === 0) throw new Error('Yahoo: no valid candles');
+  return candles.sort((a, b) => a.timestamp - b.timestamp);
+}
+
 /** Generate realistic demo candles for any symbol */
 function generateDemoCandles(symbol: string, timeframe: string, limit: number): Candle[] {
   const tfMs: Record<string, number> = {
@@ -322,8 +471,8 @@ export class UniversalDataProvider {
       fetchers.push(() => fetchBinance(meta.sourceSymbol, timeframe, limit));
       fetchers.push(() => fetchBybit(meta.sourceSymbol, timeframe, limit));
     } else {
-      // Stocks/Forex/Indices → demo data for now (Yahoo requires server proxy)
-      // In production, you'd proxy through your backend server
+      // Stocks/Forex/Indices/Commodities/Futures → Yahoo Finance via Vite proxy
+      fetchers.push(() => fetchYahoo(meta.sourceSymbol, timeframe, limit));
     }
 
     // Always have demo as final fallback

@@ -99,6 +99,14 @@ export class DataService {
   // ── WebSocket: Live Candle Streaming ───────────────────────────────────
 
   subscribe(sub: CandleSubscription): () => void {
+    // Only subscribe to BloFin WebSocket for crypto symbols
+    const meta = resolveSymbol(sub.symbol);
+    if (meta.type !== 'crypto') {
+      console.log(`[DataService] Skipping WS subscription for non-crypto symbol: ${sub.symbol} (${meta.type})`);
+      // Return a no-op unsubscribe for non-crypto symbols
+      return () => {};
+    }
+
     const key = `${sub.symbol}:${sub.timeframe}`;
     this.subscriptions.set(key, sub);
 
