@@ -22,6 +22,14 @@ const RIGHT_MARGIN = 80;
 const BOTTOM_MARGIN = 28;
 const VOLUME_MAX_RATIO = 0.25;
 
+// ─── Cached Gradients ──────────────────────────────────────────────────────────
+
+/** Cached volume gradients (recreated when chart height changes). */
+let cachedBullGrad: CanvasGradient | null = null;
+let cachedBearGrad: CanvasGradient | null = null;
+let cachedGradHeight = 0;
+let cachedGradChartH = 0;
+
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
 function isBull(c: Candle): boolean {
@@ -48,14 +56,29 @@ export function renderCandlesticks(
   candleW = Math.max(MIN_CANDLE_WIDTH, Math.min(MAX_CANDLE_WIDTH, candleW));
   const bodyW = Math.max(1, candleW - CANDLE_GAP * 2);
 
-  // Filter visible candles
+  // Filter visible candles using binary search (O(log n) instead of O(n))
   const candles = state.candles;
+  let lo = 0, hi = candles.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (candles[mid]!.timestamp < startTime) lo = mid + 1;
+    else hi = mid;
+  }
+  const startIdx = lo;
+
+  lo = startIdx;
+  hi = candles.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (candles[mid]!.timestamp <= endTime) lo = mid + 1;
+    else hi = mid;
+  }
+  const endIdx = lo;
+
+  // Build visible array from binary search range
   const visible: Candle[] = [];
-  for (let i = 0; i < candles.length; i++) {
-    const c = candles[i];
-    if (c && c.timestamp >= startTime && c.timestamp <= endTime) {
-      visible.push(c);
-    }
+  for (let i = startIdx; i < endIdx; i++) {
+    visible.push(candles[i]!);
   }
 
   // Append live candle if present and within range
@@ -118,19 +141,23 @@ export function renderCandlesticks(
       ctx.fillRect(snappedLeft, snappedTop, snappedW, snappedH);
     }
 
-    // ── Volume bar (gradient for depth) ──────────────────────────────────────
+    // ── Volume bar (cached gradient for performance) ──────────────────────────
     if (maxVolume > 0) {
       const volHeight = (candle.volume / maxVolume) * chartH * VOLUME_MAX_RATIO;
       const volTop = chartH - volHeight;
-      const grad = ctx.createLinearGradient(0, chartH, 0, volTop);
-      if (bull) {
-        grad.addColorStop(0, 'rgba(16, 185, 129, 0.04)');
-        grad.addColorStop(1, 'rgba(16, 185, 129, 0.22)');
-      } else {
-        grad.addColorStop(0, 'rgba(244, 63, 94, 0.04)');
-        grad.addColorStop(1, 'rgba(244, 63, 94, 0.22)');
+
+      // Recreate gradients only when chart height changes
+      if (chartH !== cachedGradChartH || !cachedBullGrad || !cachedBearGrad) {
+        cachedBullGrad = ctx.createLinearGradient(0, chartH, 0, 0);
+        cachedBullGrad.addColorStop(0, 'rgba(16, 185, 129, 0.04)');
+        cachedBullGrad.addColorStop(1, 'rgba(16, 185, 129, 0.22)');
+        cachedBearGrad = ctx.createLinearGradient(0, chartH, 0, 0);
+        cachedBearGrad.addColorStop(0, 'rgba(244, 63, 94, 0.04)');
+        cachedBearGrad.addColorStop(1, 'rgba(244, 63, 94, 0.22)');
+        cachedGradChartH = chartH;
       }
-      ctx.fillStyle = grad;
+
+      ctx.fillStyle = bull ? cachedBullGrad : cachedBearGrad;
       ctx.fillRect(snappedLeft, Math.round(volTop), snappedW, Math.round(volHeight));
     }
   }

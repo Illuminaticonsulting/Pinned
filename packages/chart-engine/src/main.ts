@@ -7,7 +7,7 @@ import { PropertiesPanel } from './ui/PropertiesPanel';
 import { getToolByShortcut } from './drawing/DrawingTools';
 import { SymbolService } from './services/SymbolService';
 import { SymbolSearch, createSymbolButton } from './ui/SymbolSearch';
-import { SyncControls } from './ui/SyncControls';
+// SyncControls now integrated into MultiChartLayout
 import { ShareService, ShareDialog } from './services/ShareService';
 import { LiveOrderFlowService } from './services/LiveOrderFlowService';
 import { HeatmapPanel } from './heatmap/HeatmapPanel';
@@ -24,10 +24,13 @@ import { IndicatorConflictDetector } from './ui/IndicatorConflictDetector';
 import { SessionStatsDashboard } from './ui/SessionStatsDashboard';
 import { SmartAlerts } from './ui/SmartAlerts';
 import { SplitComparison } from './ui/SplitComparison';
+import { TimeframeSelector, getTimeframeApiKey } from './ui/TimeframeSelector';
+import { heatmapStore } from './renderers/HeatmapOverlayRenderer';
+import type { HeatmapCell } from './renderers/HeatmapOverlayRenderer';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h', '1d'];
+// TIMEFRAMES constant removed — TimeframeSelector handles all timeframes
 
 // ─── PinnedApp ───────────────────────────────────────────────────────────────
 
@@ -42,7 +45,8 @@ class PinnedApp {
   private activeTimeframe = '1m';
   private symbolService: SymbolService;
   private symbolSearch: SymbolSearch | null = null;
-  private syncControls: SyncControls;
+  private timeframeSelector: TimeframeSelector | null = null;
+  // Sync controls are now part of MultiChartLayout
 
   // ── OrderFlow components ─────────────────────────────────────────────
   private liveService: LiveOrderFlowService;
@@ -73,7 +77,6 @@ class PinnedApp {
   constructor(rootEl: HTMLElement) {
     this.root = rootEl;
     this.symbolService = SymbolService.getInstance();
-    this.syncControls = new SyncControls();
     this.liveService = LiveOrderFlowService.getInstance();
 
     // ── Init new feature components ─────────────────────────────────────
@@ -225,17 +228,11 @@ class PinnedApp {
             <div class="top-bar__divider"></div>
 
             <!-- Timeframes -->
-            <div class="timeframe-group" id="timeframeGroup">
-              ${TIMEFRAMES.map(
-                (tf) =>
-                  `<button class="tf-btn ${tf === this.activeTimeframe ? 'active' : ''}" data-tf="${tf}">${tf}</button>`,
-              ).join('')}
-            </div>
+            <div id="timeframeSelectorMount"></div>
 
             <div class="top-bar__divider"></div>
 
-            <!-- Sync Controls Mount -->
-            <div id="syncControlsMount"></div>
+            <!-- Sync is now in layoutSelector dropdown -->
           </div>
 
           <div class="top-bar__center">
@@ -344,7 +341,7 @@ class PinnedApp {
     `;
 
     this.mountSymbolButton();
-    this.mountSyncControls();
+    this.mountTimeframeSelector();
     this.bindUIEvents();
   }
 
@@ -366,6 +363,34 @@ class PinnedApp {
     this.symbolSearch.open();
   }
 
+  private mountTimeframeSelector(): void {
+    const mount = this.root.querySelector<HTMLElement>('#timeframeSelectorMount');
+    if (!mount) return;
+
+    this.timeframeSelector = new TimeframeSelector({
+      currentTimeframe: this.activeTimeframe,
+      onSelect: (tf) => {
+        this.activeTimeframe = tf;
+        const pane = this.getActivePane();
+        if (pane) pane.setTimeframe(tf);
+
+        // Sync to other panes if enabled
+        if (this.layout?.isSyncTimeframe()) {
+          for (const [id, p] of this.panes) {
+            if (id !== this.activePaneId) {
+              p.setTimeframe(tf);
+            }
+          }
+        }
+
+        this.sessionStats.recordEvent({ type: 'change_timeframe', timeframe: tf, timestamp: Date.now() });
+      },
+    });
+
+    const strip = this.timeframeSelector.createTopBarStrip();
+    mount.appendChild(strip);
+  }
+
   private handleSymbolChange(symbol: string): void {
     this.activeSymbol = symbol;
     this.updateSymbolButton();
@@ -374,7 +399,7 @@ class PinnedApp {
     if (pane) pane.setSymbol(symbol);
 
     // Sync to other panes if enabled
-    if (this.syncControls.isSyncSymbol()) {
+    if (this.layout?.isSyncSymbol()) {
       for (const [id, p] of this.panes) {
         if (id !== this.activePaneId) {
           p.setSymbol(symbol);
@@ -391,13 +416,7 @@ class PinnedApp {
     if (nameEl) nameEl.textContent = this.activeSymbol.replace('-', '/');
   }
 
-  // ── Sync Controls ───────────────────────────────────────────────────────
-
-  private mountSyncControls(): void {
-    const mount = this.root.querySelector<HTMLElement>('#syncControlsMount')!;
-    const el = this.syncControls.createControls();
-    mount.appendChild(el);
-  }
+  // ── Sync Controls (integrated into MultiChartLayout) ──────────────────
 
   // ── Layout Management ────────────────────────────────────────────────────
 
@@ -479,27 +498,7 @@ class PinnedApp {
   // ── UI Events ────────────────────────────────────────────────────────────
 
   private bindUIEvents() {
-    // Timeframe buttons
-    const tfGroup = this.root.querySelector('#timeframeGroup')!;
-    tfGroup.addEventListener('click', (e) => {
-      const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('.tf-btn');
-      if (!btn) return;
-      this.activeTimeframe = btn.dataset.tf!;
-      tfGroup.querySelectorAll('.tf-btn').forEach((b) => b.classList.remove('active'));
-      btn.classList.add('active');
-
-      const pane = this.getActivePane();
-      if (pane) pane.setTimeframe(this.activeTimeframe);
-
-      // Sync to other panes if enabled
-      if (this.syncControls.isSyncTimeframe()) {
-        for (const [id, p] of this.panes) {
-          if (id !== this.activePaneId) {
-            p.setTimeframe(this.activeTimeframe);
-          }
-        }
-      }
-    });
+    // Timeframe selection is now handled by TimeframeSelector component
 
     // Share button
     const shareBtn = this.root.querySelector('#shareBtn');
@@ -726,9 +725,8 @@ class PinnedApp {
     // Update symbol button text
     this.updateSymbolButton();
 
-    this.root.querySelectorAll('.tf-btn').forEach((btn) => {
-      btn.classList.toggle('active', (btn as HTMLElement).dataset.tf === this.activeTimeframe);
-    });
+    // Update timeframe selector
+    this.timeframeSelector?.setCurrent(this.activeTimeframe);
   }
 
   private updateSymbolCount(): void {
@@ -809,21 +807,42 @@ class PinnedApp {
     });
     this.liveUnsubscribers.push(unsubBigTrade);
 
-    // Wire heatmap data
+    // Wire heatmap data → integrated canvas overlay + legacy panel
     const unsubHeatFull = this.liveService.on('heatmapFull', (blob) => {
+      // Feed to integrated canvas heatmap renderer
+      heatmapStore.setBlob(blob);
+      // Also feed to legacy panel if still mounted
       this.heatmapPanel?.setData(blob);
+
+      // Mark candle layer dirty so heatmap redraws
+      for (const pane of this.panes.values()) {
+        pane.renderEngine.markDirty(1);
+      }
     });
     this.liveUnsubscribers.push(unsubHeatFull);
 
     const unsubHeatDiff = this.liveService.on('heatmapDiff', (update) => {
       if (update.cells) {
+        // Feed to integrated canvas heatmap
+        heatmapStore.updateCells(
+          update.cells.map((c: { priceIndex: number; timeIndex: number; intensity: number; price?: number; time?: number }) => ({
+            time: c.time ?? heatmapStore.timeMin + c.timeIndex * heatmapStore.timeStep,
+            price: c.price ?? heatmapStore.priceMin + c.priceIndex * heatmapStore.priceStep,
+            intensity: c.intensity,
+          })),
+        );
+        // Also feed to legacy panel
         this.heatmapPanel?.updateCells(
-          update.cells.map((c) => ({
+          update.cells.map((c: { priceIndex: number; timeIndex: number; intensity: number }) => ({
             priceIndex: c.priceIndex,
             timeIndex: c.timeIndex,
             intensity: c.intensity,
           })),
         );
+        // Mark candle layer dirty
+        for (const pane of this.panes.values()) {
+          pane.renderEngine.markDirty(1);
+        }
       }
     });
     this.liveUnsubscribers.push(unsubHeatDiff);
@@ -868,6 +887,12 @@ class PinnedApp {
     this.showHeatmap = !this.showHeatmap;
     const mount = this.root.querySelector<HTMLElement>('#heatmapPanelMount');
     const btn = this.root.querySelector('#toggleHeatmap');
+
+    // Toggle integrated canvas heatmap on all panes
+    heatmapStore.setEnabled(this.showHeatmap);
+    for (const pane of this.panes.values()) {
+      pane.setHeatmapOverlay(this.showHeatmap);
+    }
 
     if (this.showHeatmap) {
       if (mount) mount.style.display = 'block';
@@ -1085,7 +1110,7 @@ class PinnedApp {
         keywords: ['symbol', 'search', 'pair', 'instrument', 'ticker'],
         execute: () => this.openSymbolSearch(),
       },
-      ...TIMEFRAMES.map((tf) => ({
+      ...['1s','5s','15s','30s','1m','3m','5m','15m','30m','45m','1h','2h','3h','4h','6h','8h','12h','1d','2d','3d','1w','2w','1M','3M','6M','12M'].map((tf) => ({
         id: `nav:timeframe_${tf}`,
         label: `Set Timeframe: ${tf}`,
         description: `Switch to ${tf} timeframe`,
@@ -1178,10 +1203,10 @@ class PinnedApp {
       })),
 
       // ── Layout ─────────────────────────────────────────────────────
-      ...(['1', '2h', '2v', '3L', '4'] as LayoutMode[]).map((mode) => ({
+      ...(['1','2h','2v','3v','3h','3L','3R','3T','3B','4','4L','4R','4T','4B','4v','4h','5a','5b','5c','6a','6b','8a','8b'] as LayoutMode[]).map((mode) => ({
         id: `layout:${mode}`,
-        label: `Layout: ${layoutLabel(mode)}`,
-        description: `Switch to ${layoutLabel(mode)} chart layout`,
+        label: `Layout: ${MultiChartLayout.getLabel(mode)}`,
+        description: `Switch to ${MultiChartLayout.getLabel(mode)} chart layout`,
         category: 'layout' as const,
         icon: '⊞',
         keywords: ['layout', 'grid', 'pane', 'split', mode],
@@ -1357,19 +1382,7 @@ class PinnedApp {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function layoutLabel(mode: LayoutMode): string {
-  switch (mode) {
-    case '1': return 'Single';
-    case '2h': return '2 Horizontal';
-    case '2v': return '2 Vertical';
-    case '3L': return '1 Left + 2 Right';
-    case '3R': return '2 Left + 1 Right';
-    case '3T': return '1 Top + 2 Bottom';
-    case '3B': return '2 Top + 1 Bottom';
-    case '4': return '2×2 Grid';
-    default: return mode;
-  }
-}
+// layoutLabel is now MultiChartLayout.getLabel()
 
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
 

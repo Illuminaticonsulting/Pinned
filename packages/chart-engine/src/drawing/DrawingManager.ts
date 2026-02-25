@@ -545,6 +545,36 @@ export class DrawingManager {
     return clone;
   }
 
+  // ── Update Properties ──────────────────────────────────────────────────────
+
+  /**
+   * Update the visual properties of a drawing (color, lineWidth, etc.).
+   * Applies the partial property update and persists it in state.
+   */
+  updateProperties(drawingId: string, props: Partial<import('../core/ChartState').DrawingProperties>): void {
+    const drawings = this.state.get('activeDrawings');
+    const idx = drawings.findIndex((d) => d.id === drawingId);
+    if (idx === -1) return;
+
+    const drawing = drawings[idx]!;
+    const updated: import('../core/ChartState').Drawing = {
+      ...drawing,
+      properties: { ...drawing.properties, ...props },
+      updatedAt: Date.now(),
+    };
+
+    // If updated points were provided (from coordinates tab), apply them
+    const updatedPoints = (props as any)._updatedPoints;
+    if (updatedPoints && Array.isArray(updatedPoints)) {
+      (updated as any).points = updatedPoints;
+      delete (updated.properties as any)._updatedPoints;
+    }
+
+    const newDrawings = [...drawings];
+    newDrawings[idx] = updated;
+    this.state.setState({ activeDrawings: newDrawings });
+  }
+
   // ── Context Menu ───────────────────────────────────────────────────────────
 
   /**

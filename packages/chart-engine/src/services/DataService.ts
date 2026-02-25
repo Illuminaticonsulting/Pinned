@@ -5,6 +5,7 @@
  */
 
 import type { Candle } from '../core/ChartState';
+import { UniversalDataProvider, resolveSymbol } from './UniversalDataProvider';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -17,12 +18,18 @@ const RECONNECT_BASE = 2_000;
 const RECONNECT_MAX = 30_000;
 
 const TIMEFRAME_MAP: Record<string, string> = {
-  '1m': '1m',
-  '5m': '5m',
-  '15m': '15m',
-  '1h': '1H',
-  '4h': '4H',
-  '1d': '1D',
+  // Seconds (not supported by BloFin REST, will use demo)
+  '1s': '1s', '5s': '5s', '10s': '10s', '15s': '15s', '30s': '30s',
+  // Minutes
+  '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m', '45m': '45m',
+  // Hours (BloFin uses uppercase)
+  '1h': '1H', '2h': '2H', '3h': '3H', '4h': '4H', '6h': '6H', '8h': '8H', '12h': '12H',
+  // Days
+  '1d': '1D', '2d': '2D', '3d': '3D',
+  // Weeks
+  '1w': '1W', '2w': '2W',
+  // Months
+  '1M': '1M', '3M': '3M', '6M': '6M', '12M': '12M',
 };
 
 function blofinTf(tf: string): string {
@@ -31,8 +38,11 @@ function blofinTf(tf: string): string {
 
 function reverseTf(bar: string): string {
   const rev: Record<string, string> = {
-    '1m': '1m', '5m': '5m', '15m': '15m',
-    '1H': '1h', '4H': '4h', '1D': '1d',
+    '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m', '45m': '45m',
+    '1H': '1h', '2H': '2h', '3H': '3h', '4H': '4h', '6H': '6h', '8H': '8h', '12H': '12h',
+    '1D': '1d', '2D': '2d', '3D': '3d',
+    '1W': '1w', '2W': '2w',
+    '1M': '1M', '3M': '3M', '6M': '6M', '12M': '12M',
   };
   return rev[bar] ?? '1m';
 }
@@ -74,56 +84,16 @@ export class DataService {
     timeframe: string,
     limit = 300,
   ): Promise<Candle[]> {
-    const bar = blofinTf(timeframe);
-    const url = `${REST_PROXY}/api/v1/market/candles?instId=${encodeURIComponent(symbol)}&bar=${bar}&limit=${limit}`;
-
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      try {
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-        const json = await res.json();
-        if (json.code && json.code !== '0') {
-          throw new Error(`BloFin error ${json.code}: ${json.msg}`);
-        }
-
-        const raw = json.data as string[][];
-        if (!Array.isArray(raw) || raw.length === 0) {
-          throw new Error('Empty candle data');
-        }
-
-        // BloFin returns newest-first; reverse to chronological
-        const candles: Candle[] = raw
-          .map((d) => ({
-            timestamp: Number(d[0]),
-            open: Number(d[1]),
-            high: Number(d[2]),
-            low: Number(d[3]),
-            close: Number(d[4]),
-            volume: Number(d[5]),
-            buyVolume: Number(d[6] ?? 0),
-            sellVolume: Number(d[7] ?? 0),
-          }))
-          .sort((a, b) => a.timestamp - b.timestamp);
-
-        console.log(
-          `[DataService] Fetched ${candles.length} candles for ${symbol} ${timeframe}`,
-        );
-        return candles;
-      } catch (err) {
-        console.warn(
-          `[DataService] Fetch attempt ${attempt + 1} failed:`,
-          err instanceof Error ? err.message : err,
-        );
-        if (attempt < MAX_RETRIES) {
-          await new Promise((r) => setTimeout(r, RETRY_DELAY * (attempt + 1)));
-        }
-      }
+    // Delegate to UniversalDataProvider which supports BloFin, Binance, Bybit + demo fallback
+    const provider = UniversalDataProvider.getInstance();
+    try {
+      const candles = await provider.fetchCandles(symbol, timeframe, limit);
+      console.log(`[DataService] Fetched ${candles.length} candles for ${symbol} ${timeframe}`);
+      return candles;
+    } catch (err) {
+      console.warn('[DataService] UniversalDataProvider failed, generating demo candles:', err);
+      return this.generateDemoCandles(symbol, timeframe, limit);
     }
-
-    // Fallback to demo candles
-    console.warn('[DataService] All fetches failed, generating demo candles');
-    return this.generateDemoCandles(symbol, timeframe, limit);
   }
 
   // ── WebSocket: Live Candle Streaming ───────────────────────────────────

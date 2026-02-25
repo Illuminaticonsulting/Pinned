@@ -101,7 +101,7 @@ type EventCallback<T> = (payload: T) => void;
 
 // ─── Cursor Styles ─────────────────────────────────────────────────────────────
 
-type CursorStyle = 'default' | 'crosshair' | 'grab' | 'grabbing' | 'pointer' | 'move' | 'not-allowed'
+type CursorStyle = 'default' | 'crosshair' | 'grab' | 'grabbing' | 'pointer' | 'move' | 'not-allowed' | 'ns-resize' | 'ew-resize' | 'n-resize' | 'col-resize'
   | 'nw-resize' | 'ne-resize' | 'sw-resize' | 'se-resize' | 'n-resize' | 's-resize' | 'e-resize' | 'w-resize';
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
@@ -110,16 +110,34 @@ type CursorStyle = 'default' | 'crosshair' | 'grab' | 'grabbing' | 'pointer' | '
 const DRAG_THRESHOLD = 3;
 
 /** Momentum friction coefficient per frame (0–1, lower = more friction). */
-const MOMENTUM_FRICTION = 0.965;
+const MOMENTUM_FRICTION = 0.94;
 
 /** Stop momentum when velocity falls below this (px/frame). */
-const MOMENTUM_MIN_VELOCITY = 0.3;
+const MOMENTUM_MIN_VELOCITY = 0.2;
 
 /** Long-press duration for touch (ms). */
 const LONG_PRESS_MS = 500;
 
 /** Hit-test tolerance in CSS pixels. */
 const HIT_TOLERANCE = 8;
+
+/** Right-side price axis width in CSS pixels (must match renderer). */
+const RIGHT_MARGIN = 80;
+
+/** Bottom time axis height in CSS pixels (must match renderer). */
+const BOTTOM_MARGIN = 28;
+
+/** Zoom sensitivity for smooth wheel/trackpad zoom. */
+const ZOOM_SENSITIVITY = 0.0015;
+
+/** Zoom sensitivity for trackpad pinch (Ctrl+wheel on macOS). */
+const PINCH_ZOOM_SENSITIVITY = 0.008;
+
+/** Number of recent velocity samples to average for smooth momentum. */
+const VELOCITY_SAMPLES = 5;
+
+/** Minimum time between velocity samples (ms) to avoid micro-deltas. */
+const VELOCITY_SAMPLE_MIN_DT = 4;
 
 // ─── InputHandler ──────────────────────────────────────────────────────────────
 
@@ -187,6 +205,26 @@ export class InputHandler {
 
   private boundHandlers: Record<string, EventListener> = {};
 
+  // ── Cached layout / interaction state ───────────────────────────────────────
+
+  /** Cached bounding rect — updated on resize/scroll, avoids layout recalc on every event. */
+  private cachedRect: DOMRect | null = null;
+
+  /** ResizeObserver for updating cached rect. */
+  private resizeObserver: ResizeObserver | null = null;
+
+  /** AbortController for scroll listener. */
+  private scrollAbort: AbortController | null = null;
+
+  /** Velocity history for averaged momentum (recent samples). */
+  private velocityHistory: { vx: number; vy: number; t: number }[] = [];
+
+  /** Which interaction zone the current drag started in. */
+  private dragZone: 'chart' | 'priceAxis' | 'timeAxis' = 'chart';
+
+  /** Timestamp of last pointer move (for velocity delta-time). */
+  private lastMoveTime = 0;
+
   constructor(
     canvas: HTMLCanvasElement,
     viewport: Viewport,
@@ -196,6 +234,17 @@ export class InputHandler {
     this.viewport = viewport;
     this.getState = getState;
     this.attachEvents();
+
+    // Cache bounding rect to avoid getBoundingClientRect() on every event.
+    this.cachedRect = canvas.getBoundingClientRect();
+    this.resizeObserver = new ResizeObserver(() => {
+      this.cachedRect = this.canvas.getBoundingClientRect();
+    });
+    this.resizeObserver.observe(canvas);
+    this.scrollAbort = new AbortController();
+    window.addEventListener('scroll', () => {
+      this.cachedRect = this.canvas.getBoundingClientRect();
+    }, { passive: true, capture: true, signal: this.scrollAbort.signal });
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
@@ -289,6 +338,11 @@ export class InputHandler {
     this.detachEvents();
     this.stopMomentum();
     this.listeners.clear();
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
+    this.scrollAbort?.abort();
+    this.scrollAbort = null;
+    this.cachedRect = null;
   }
 
   // ── Event Emission ─────────────────────────────────────────────────────────
@@ -307,10 +361,18 @@ export class InputHandler {
 
   // ── Coordinate Helpers ─────────────────────────────────────────────────────
 
-  /** Get CSS-pixel coordinates relative to the canvas. */
+  /** Get CSS-pixel coordinates relative to the canvas (uses cached rect). */
   private canvasCoords(e: MouseEvent | Touch): { x: number; y: number } {
-    const rect = this.canvas.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    const r = this.cachedRect ?? (this.cachedRect = this.canvas.getBoundingClientRect());
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  }
+
+  /** Determine which interaction zone a point falls in. */
+  private getZone(x: number, y: number): 'chart' | 'priceAxis' | 'timeAxis' {
+    const { width, height } = this.viewport.getLogicalSize();
+    if (x > width - RIGHT_MARGIN && y < height - BOTTOM_MARGIN) return 'priceAxis';
+    if (y > height - BOTTOM_MARGIN && x < width - RIGHT_MARGIN) return 'timeAxis';
+    return 'chart';
   }
 
   /** Convert pixel coords to chart domain (time, price). */
@@ -321,19 +383,32 @@ export class InputHandler {
     };
   }
 
-  /** Snap cursor to nearest candle OHLC price for magnetic drawing placement. */
+  /** Snap cursor to nearest candle OHLC price for magnetic drawing placement (binary search). */
   private snapToOHLC(
     cursorX: number,
     domain: { time: number; price: number },
   ): { time: number; price: number } {
     const state = this.getState();
+    const candles = state.candles;
     const candleW = this.viewport.getCandleWidth();
     const snapRadius = candleW * 0.6;
 
+    if (candles.length === 0) return domain;
+
+    // Binary search for the nearest candle by timestamp
+    const cursorTime = this.viewport.xToTime(cursorX);
+    let lo = 0, hi = candles.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (candles[mid]!.timestamp < cursorTime) lo = mid + 1;
+      else hi = mid;
+    }
+
+    // Check a small window around the found index
     let bestCandle: any = null;
     let bestDist = Infinity;
-
-    for (const c of state.candles) {
+    for (let i = Math.max(0, lo - 2); i <= Math.min(candles.length - 1, lo + 2); i++) {
+      const c = candles[i]!;
       const cx = this.viewport.timeToX(c.timestamp);
       const dist = Math.abs(cx - cursorX);
       if (dist < bestDist && dist <= snapRadius) {
@@ -341,6 +416,7 @@ export class InputHandler {
         bestCandle = c;
       }
     }
+
     if (state.liveCandle) {
       const cx = this.viewport.timeToX(state.liveCandle.timestamp);
       const dist = Math.abs(cx - cursorX);
@@ -500,8 +576,12 @@ export class InputHandler {
     }
 
     if (this.mode === 'NAVIGATE') {
-      // Check if clicking on a drawing → select and prepare for drag in one gesture
-      const hit = this.hitTestDrawings(x, y);
+      // Detect which zone the drag starts in
+      const zone = this.getZone(x, y);
+      this.dragZone = zone;
+
+      // Only hit-test drawings in the chart area
+      const hit = zone === 'chart' ? this.hitTestDrawings(x, y) : null;
       if (hit) {
         this.selectedDrawing = hit;
         this.mode = 'SELECT';
@@ -509,7 +589,10 @@ export class InputHandler {
         this.emit('modeChange', { mode: 'SELECT' });
         this.setCursor('move');
       } else {
-        this.setCursor('grabbing');
+        this.setCursor(
+          zone === 'chart' ? 'grabbing' :
+          zone === 'priceAxis' ? 'ns-resize' : 'ew-resize'
+        );
       }
     }
   }
@@ -536,9 +619,31 @@ export class InputHandler {
 
       if (this.isDragging) {
         if (this.mode === 'NAVIGATE') {
-          this.velocityX = dx;
-          this.velocityY = dy;
-          this.emit('pan', { deltaX: dx, deltaY: dy });
+          const now = performance.now();
+
+          // Track velocity with timestamps for smooth momentum
+          if (now - this.lastMoveTime >= VELOCITY_SAMPLE_MIN_DT) {
+            this.velocityHistory.push({ vx: dx, vy: dy, t: now });
+            if (this.velocityHistory.length > VELOCITY_SAMPLES) {
+              this.velocityHistory.shift();
+            }
+            this.lastMoveTime = now;
+          }
+
+          if (this.dragZone === 'priceAxis') {
+            // Dragging on price axis: scale price independently
+            const factor = Math.exp(dy * 0.005);
+            this.emit('zoom', { factor, centerX: x, centerY: this.pointerStartY, axis: 'price' });
+          } else if (this.dragZone === 'timeAxis') {
+            // Dragging on time axis: scale time independently
+            const factor = Math.exp(-dx * 0.003);
+            this.emit('zoom', { factor, centerX: this.pointerStartX, centerY: y, axis: 'time' });
+          } else {
+            // Normal chart drag: pan both axes
+            this.velocityX = dx;
+            this.velocityY = dy;
+            this.emit('pan', { deltaX: dx, deltaY: dy });
+          }
         } else if (this.mode === 'SELECT' && this.selectedDrawing) {
           if (this._resizing) {
             // Resize mode: emit domain coords so DrawingManager can reposition handle
@@ -664,17 +769,44 @@ export class InputHandler {
   private onWheel(e: WheelEvent): void {
     e.preventDefault();
     const { x, y } = this.canvasCoords(e);
+    const { width, height } = this.viewport.getLogicalSize();
 
-    // Smooth 4% zoom per tick (buttery feel, especially on trackpads)
-    const rawDelta = Math.sign(e.deltaY);
-    const delta = 1 - rawDelta * 0.04;
+    // Normalize deltaY/deltaX across browsers and input devices.
+    // deltaMode 0 = pixels, 1 = lines (×40), 2 = pages (×800)
+    let deltaY = e.deltaY;
+    let deltaX = e.deltaX;
+    if (e.deltaMode === 1) { deltaY *= 40; deltaX *= 40; }
+    else if (e.deltaMode === 2) { deltaY *= 800; deltaX *= 800; }
 
-    if (e.ctrlKey || e.metaKey) {
-      // Ctrl+Wheel: zoom price axis.
-      this.emit('zoom', { factor: delta, centerX: x, centerY: y, axis: 'price' });
+    // macOS trackpad pinch-to-zoom fires as Ctrl+wheel
+    const isPinch = e.ctrlKey && !e.metaKey;
+
+    if (isPinch) {
+      // ── Trackpad pinch: zoom both axes centered on cursor ──
+      const factor = Math.exp(-deltaY * PINCH_ZOOM_SENSITIVITY);
+      this.emit('zoom', { factor, centerX: x, centerY: y, axis: 'both' });
+    } else if (e.shiftKey) {
+      // ── Shift+wheel: horizontal pan (scroll through time) ──
+      this.emit('pan', { deltaX: -deltaY, deltaY: 0 });
+    } else if (x > width - RIGHT_MARGIN && y < height - BOTTOM_MARGIN) {
+      // ── Wheel on price axis: scale price independently ──
+      const factor = Math.exp(-deltaY * ZOOM_SENSITIVITY * 2);
+      this.emit('zoom', { factor, centerX: x, centerY: y, axis: 'price' });
+    } else if (y > height - BOTTOM_MARGIN && x < width - RIGHT_MARGIN) {
+      // ── Wheel on time axis: scale time independently ──
+      const factor = Math.exp(-deltaY * ZOOM_SENSITIVITY * 2);
+      this.emit('zoom', { factor, centerX: x, centerY: y, axis: 'time' });
     } else {
-      // Normal wheel: zoom time axis.
-      this.emit('zoom', { factor: delta, centerX: x, centerY: y, axis: 'time' });
+      // ── Normal wheel on chart: smooth zoom time axis at cursor ──
+      // Exponential mapping → buttery-smooth on trackpad, natural on mouse wheel
+      const factor = Math.exp(-deltaY * ZOOM_SENSITIVITY);
+
+      // If there’s significant horizontal delta (trackpad two-finger swipe), also pan
+      if (Math.abs(deltaX) > 1) {
+        this.emit('pan', { deltaX: -deltaX, deltaY: 0 });
+      }
+
+      this.emit('zoom', { factor, centerX: x, centerY: y, axis: 'time' });
     }
   }
 
@@ -871,14 +1003,39 @@ export class InputHandler {
   // ── Momentum ───────────────────────────────────────────────────────────────
 
   private startMomentum(): void {
+    // Only apply momentum for chart area drags, not axis drags
+    if (this.dragZone !== 'chart') return;
+
+    // Average velocity over recent samples for smoother momentum
+    if (this.velocityHistory.length >= 2) {
+      const recent = this.velocityHistory.slice(-VELOCITY_SAMPLES);
+      let totalVx = 0, totalVy = 0;
+      for (const s of recent) {
+        totalVx += s.vx;
+        totalVy += s.vy;
+      }
+      this.velocityX = totalVx / recent.length;
+      this.velocityY = totalVy / recent.length;
+    }
+    this.velocityHistory = [];
+
     if (Math.abs(this.velocityX) < MOMENTUM_MIN_VELOCITY &&
         Math.abs(this.velocityY) < MOMENTUM_MIN_VELOCITY) {
       return;
     }
 
+    let lastTime = performance.now();
+
     const step = (): void => {
-      this.velocityX *= MOMENTUM_FRICTION;
-      this.velocityY *= MOMENTUM_FRICTION;
+      const now = performance.now();
+      const dt = Math.min(now - lastTime, 32); // Cap at ~30fps minimum
+      const frameFactor = dt / 16.67; // Normalize to 60fps baseline
+      lastTime = now;
+
+      // Frame-rate-independent friction (consistent feel at any refresh rate)
+      const friction = Math.pow(MOMENTUM_FRICTION, frameFactor);
+      this.velocityX *= friction;
+      this.velocityY *= friction;
 
       if (Math.abs(this.velocityX) < MOMENTUM_MIN_VELOCITY &&
           Math.abs(this.velocityY) < MOMENTUM_MIN_VELOCITY) {
@@ -886,7 +1043,10 @@ export class InputHandler {
         return;
       }
 
-      this.emit('pan', { deltaX: this.velocityX, deltaY: this.velocityY });
+      this.emit('pan', {
+        deltaX: this.velocityX * frameFactor,
+        deltaY: this.velocityY * frameFactor,
+      });
       this.momentumRaf = requestAnimationFrame(step);
     };
 

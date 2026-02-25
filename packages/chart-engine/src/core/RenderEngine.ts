@@ -98,9 +98,11 @@ export class RenderEngine {
   /** Timestamp of the last frame (for FPS calculation). */
   private lastFrameTime = 0;
 
-  /** Rolling FPS counter. */
+  /** Rolling FPS counter (circular buffer). */
   private fps = 0;
-  private frameTimeSamples: number[] = [];
+  private frameTimeSamples: Float64Array;
+  private sampleIndex = 0;
+  private sampleCount = 0;
   private readonly FPS_SAMPLE_COUNT = 60;
 
   /** Current logical dimensions. */
@@ -109,6 +111,18 @@ export class RenderEngine {
 
   /** Device pixel ratio. */
   private dpr = 1;
+
+  /** Consecutive idle frames (no dirty layers). Used for sleep optimization. */
+  private idleFrames = 0;
+
+  /** Maximum idle frames before pausing the RAF loop. */
+  private readonly MAX_IDLE_FRAMES = 60;
+
+  /** Whether we are in idle-sleep mode (RAF paused). */
+  private sleeping = false;
+
+  /** Last glow frame timestamp (typed, avoids `as any` hack). */
+  private _lastGlowFrame = 0;
 
   /**
    * @param container - A DOM element that will host the stacked canvases.
@@ -124,6 +138,7 @@ export class RenderEngine {
     this.viewport = viewport;
     this.getState = getState;
     this.dpr = typeof window !== 'undefined' ? window.devicePixelRatio : 1;
+    this.frameTimeSamples = new Float64Array(this.FPS_SAMPLE_COUNT);
 
     this.createCanvases();
   }
@@ -152,6 +167,9 @@ export class RenderEngine {
 
       // Only the topmost layer should receive pointer events.
       canvas.style.pointerEvents = i === LAYER_COUNT - 1 ? 'auto' : 'none';
+
+      // GPU compositing hint for smoother rendering.
+      canvas.style.willChange = 'transform';
 
       const ctx = canvas.getContext('2d', { alpha: i !== 0 });
       if (!ctx) throw new Error(`Failed to get 2D context for layer ${i} (${LAYER_NAMES[i]})`);
@@ -204,20 +222,36 @@ export class RenderEngine {
 
   /**
    * Mark a specific layer as needing a redraw on the next frame.
+   * Wakes the engine from sleep if necessary.
    *
    * @param layer - Layer index (0–5).
    */
   markDirty(layer: number): void {
     this.assertLayer(layer);
     this.dirty[layer] = true;
+    this.wake();
   }
 
   /**
    * Mark all layers as dirty, forcing a full redraw on the next frame.
+   * Wakes the engine from sleep if necessary.
    */
   markAllDirty(): void {
     for (let i = 0; i < LAYER_COUNT; i++) {
       this.dirty[i] = true;
+    }
+    this.wake();
+  }
+
+  /**
+   * Wake the render loop from idle sleep.
+   */
+  private wake(): void {
+    this.idleFrames = 0;
+    if (this.sleeping && this.running) {
+      this.sleeping = false;
+      this.lastFrameTime = performance.now();
+      this.rafHandle = requestAnimationFrame(this.tick);
     }
   }
 
@@ -334,9 +368,9 @@ export class RenderEngine {
 
     // Live candle pulse animation: re-render layer 1 at ~20fps for smooth glow
     if (state.liveCandle && !this.dirty[1]) {
-      if (now - (this as any)._lastGlowFrame > 50) {
+      if (now - this._lastGlowFrame > 50) {
         this.dirty[1] = true;
-        (this as any)._lastGlowFrame = now;
+        this._lastGlowFrame = now;
       }
     }
 
@@ -375,20 +409,39 @@ export class RenderEngine {
         );
       }
     }
+
+    // Idle sleep optimization: if nothing was dirty for N consecutive frames,
+    // pause the RAF loop to save CPU/battery. We'll wake on the next markDirty().
+    if (!anyDirty) {
+      this.idleFrames++;
+      if (this.idleFrames >= this.MAX_IDLE_FRAMES) {
+        this.sleeping = true;
+        if (this.rafHandle) {
+          cancelAnimationFrame(this.rafHandle);
+          this.rafHandle = 0;
+        }
+        return;
+      }
+    } else {
+      this.idleFrames = 0;
+    }
   };
 
   // ── Internal Helpers ───────────────────────────────────────────────────────
 
   /**
-   * Update FPS rolling average.
+   * Update FPS rolling average (circular buffer — O(1) per frame).
    */
   private updateFps(frameDeltaMs: number): void {
-    this.frameTimeSamples.push(frameDeltaMs);
-    if (this.frameTimeSamples.length > this.FPS_SAMPLE_COUNT) {
-      this.frameTimeSamples.shift();
+    this.frameTimeSamples[this.sampleIndex] = frameDeltaMs;
+    this.sampleIndex = (this.sampleIndex + 1) % this.FPS_SAMPLE_COUNT;
+    if (this.sampleCount < this.FPS_SAMPLE_COUNT) this.sampleCount++;
+
+    let sum = 0;
+    for (let i = 0; i < this.sampleCount; i++) {
+      sum += this.frameTimeSamples[i]!;
     }
-    const avg =
-      this.frameTimeSamples.reduce((a, b) => a + b, 0) / this.frameTimeSamples.length;
+    const avg = sum / this.sampleCount;
     this.fps = avg > 0 ? 1000 / avg : 0;
   }
 

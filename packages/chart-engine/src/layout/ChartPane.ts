@@ -17,7 +17,9 @@ import { renderDrawings } from '../drawing/DrawingRenderer';
 import { renderVolumeProfile } from '../renderers/VolumeProfileRenderer';
 import { renderFootprint } from '../renderers/FootprintRenderer';
 import { renderPatternAnnotations } from '../renderers/PatternAnnotationRenderer';
+import { renderHeatmapOverlay, heatmapStore } from '../renderers/HeatmapOverlayRenderer';
 import { DataService } from '../services/DataService';
+import { DrawingPropertiesDialog } from '../ui/DrawingPropertiesDialog';
 import type { PaneConfig } from './MultiChartLayout';
 
 export class ChartPane {
@@ -39,8 +41,10 @@ export class ChartPane {
   private loading = false;
   private showVolumeProfile = false;
   private showFootprint = false;
+  private showHeatmapOverlay = false;
   private showAnnotations = true;
   private patternEvents: import('../renderers/PatternAnnotationRenderer').AnnotationPatternEvent[] = [];
+  private propertiesDialog: DrawingPropertiesDialog;
 
   constructor(paneEl: HTMLElement, config: PaneConfig) {
     this.id = config.id;
@@ -48,6 +52,25 @@ export class ChartPane {
     this.container = paneEl;
     this.canvasContainer = paneEl.querySelector('.pane-canvas-container')!;
     this.dataService = DataService.getInstance();
+
+    // Drawing properties dialog (TradingView-style)
+    this.propertiesDialog = new DrawingPropertiesDialog(
+      // onChange
+      (drawingId, props) => {
+        this.drawingManager.updateProperties(drawingId, props);
+        this.renderEngine.markDirty(3);
+      },
+      // onDelete
+      (drawingId) => {
+        this.drawingManager.deleteDrawing(drawingId);
+        this.renderEngine.markDirty(3);
+      },
+      // onClone
+      (drawingId) => {
+        this.drawingManager.cloneDrawing(drawingId);
+        this.renderEngine.markDirty(3);
+      },
+    );
 
     // Initialize core systems
     this.state = new ChartState({
@@ -141,6 +164,13 @@ export class ChartPane {
     this.renderEngine.markDirty(2);
   }
 
+  /** Toggle heatmap overlay on chart canvas */
+  setHeatmapOverlay(enabled: boolean): void {
+    this.showHeatmapOverlay = enabled;
+    heatmapStore.setEnabled(enabled);
+    this.renderEngine.markDirty(1);
+  }
+
   /** Toggle footprint candle overlay */
   setFootprint(enabled: boolean): void {
     this.showFootprint = enabled;
@@ -190,8 +220,11 @@ export class ChartPane {
       renderGrid(ctx, vp, st);
     });
 
-    // Layer 1 - Candlesticks (+ Footprint overlay when zoomed in)
+    // Layer 1 - Heatmap (behind) + Candlesticks (+ Footprint overlay when zoomed in)
     this.renderEngine.registerRenderer(1, (ctx, vp, st) => {
+      if (this.showHeatmapOverlay) {
+        renderHeatmapOverlay(ctx, vp, st);
+      }
       renderCandlesticks(ctx, vp, st);
       if (this.showFootprint) {
         renderFootprint(ctx, vp, st);
@@ -233,10 +266,16 @@ export class ChartPane {
 
     // Zoom — payload is ZoomEvent { factor, centerX, centerY, axis }
     this.inputHandler.on('zoom', (e) => {
-      this.viewport.zoom(e.factor, e.centerX);
+      this.viewport.zoom(e.factor, e.centerX, e.centerY, e.axis);
       const st = this.state.getState();
-      if (st.autoScale && st.candles.length > 0) {
+      // Only auto-fit price when zooming time axis and autoScale is enabled
+      // (manual price axis zoom should not be overridden)
+      if (e.axis !== 'price' && st.autoScale && st.candles.length > 0) {
         this.viewport.fitPriceRange(st.candles);
+      }
+      // Disable autoScale when user explicitly zooms the price axis
+      if (e.axis === 'price') {
+        this.state.setState({ autoScale: false });
       }
       this.renderEngine.markAllDirty();
     });
@@ -372,6 +411,35 @@ export class ChartPane {
     this.inputHandler.on('redo', () => {
       this.commandStack.redo();
       this.renderEngine.markDirty(3);
+    });
+
+    // ── Drawing click → open properties dialog ───────────────────────────────
+    this.inputHandler.on('drawingClick', (e) => {
+      // Single click on a selected drawing opens the properties dialog
+      if (e.drawing && !this.propertiesDialog.isOpen()) {
+        this.propertiesDialog.open(e.drawing);
+      }
+    });
+
+    // ── Context menu → show drawing options ──────────────────────────────────
+    this.inputHandler.on('contextMenu', (e) => {
+      if (e.drawing) {
+        this.propertiesDialog.open(e.drawing);
+      }
+    });
+
+    // ── Snap to live edge ────────────────────────────────────────────────────
+    this.inputHandler.on('snapToLive', () => {
+      const st = this.state.getState();
+      if (st.candles.length > 0) {
+        const last = st.candles[st.candles.length - 1]!;
+        const span = this.viewport.getVisibleTimeRange();
+        const duration = span.end - span.start;
+        this.viewport.setVisibleRange(last.timestamp - duration * 0.9, last.timestamp + duration * 0.1);
+        this.viewport.fitPriceRange(st.candles);
+        this.state.setState({ atLiveEdge: true, autoScale: true });
+        this.renderEngine.markAllDirty();
+      }
     });
   }
 
